@@ -1,5 +1,6 @@
 import os
 import uuid
+import base64
 import requests
 from fastapi import FastAPI, Request, Response, HTTPException, BackgroundTasks
 from dotenv import load_dotenv
@@ -57,7 +58,7 @@ def get_ai_response(user_message: str, image_url: str = None) -> str:
         if user_message:
             content.append({"type": "text", "text": user_message})
         else:
-            content.append({"type": "text", "text": "Please analyze this document/image and extract all relevant information for my German university/bureaucracy application."})
+            content.append({"type": "text", "text": "Please analyze this document/image, extract all relevant text and key information, and explain what it is or how it relates to German university admissions, visa, or bureaucracy."})
             
         if image_url:
             content.append({
@@ -68,7 +69,7 @@ def get_ai_response(user_message: str, image_url: str = None) -> str:
         completion = llama_client.chat.completions.create(
             model="meta/llama-3.2-11b-vision-instruct",
             messages=[
-                {"role": "system", "content": "You are Voraus AI, a helpful consultant for moving to Germany, assisting international students and applicants with university admissions, vocational training (Ausbildung), and German bureaucracy. Always reply in English by default (unless the user explicitly speaks in another language). Keep your answers concise, friendly, and formatted nicely for WhatsApp (use emojis, bold text like *this*, bullet points, etc)."},
+                {"role": "system", "content": "You are Voraus AI, a helpful consultant for moving to Germany, assisting international students and applicants with university admissions, vocational training (Ausbildung), and German bureaucracy. Always reply in English by default (unless the user explicitly speaks in another language). When an image or document is provided, read all visible text carefully, provide clear OCR extraction, and offer actionable advice. Keep your answers concise, friendly, and formatted nicely for WhatsApp (use emojis, bold text like *this*, bullet points, etc)."},
                 {"role": "user", "content": content}
             ],
             temperature=0.5,
@@ -104,7 +105,10 @@ def send_whatsapp_message(phone_number_id: str, to: str, text: str):
 def download_whatsapp_media(media_id: str) -> bytes:
     """Gets the download URL and downloads the media bytes from WhatsApp."""
     url = f"https://graph.facebook.com/v18.0/{media_id}"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "User-Agent": "curl/7.64.1"
+    }
     
     # 1. Get temporary media URL
     res = requests.get(url, headers=headers)
@@ -115,11 +119,11 @@ def download_whatsapp_media(media_id: str) -> bytes:
     # 2. Download the actual binary file
     res_bytes = requests.get(media_url, headers=headers)
     if res_bytes.status_code != 200:
-        raise Exception("Failed to download media bytes")
+        raise Exception(f"Failed to download media bytes: {res_bytes.status_code}")
     return res_bytes.content
 
 def process_whatsapp_message(phone_number_id: str, sender_phone: str, text_content: str = "", media_id: str = None, mime_type: str = None):
-    image_url = None
+    image_uri = None
     
     # If the user sent a document or image
     if media_id:
@@ -127,26 +131,30 @@ def process_whatsapp_message(phone_number_id: str, sender_phone: str, text_conte
             print(f"Downloading media {media_id} from WhatsApp...")
             media_bytes = download_whatsapp_media(media_id)
             
-            # Extract file extension from mime type
-            file_extension = mime_type.split("/")[-1] if mime_type else "jpg"
-            if file_extension == "jpeg": file_extension = "jpg"
-            file_name = f"{uuid.uuid4()}.{file_extension}"
+            # Format as Data URI for instant Llama 3.2 Vision consumption
+            actual_mime = mime_type if mime_type else "image/jpeg"
+            b64_data = base64.b64encode(media_bytes).decode("utf-8")
+            image_uri = f"data:{actual_mime};base64,{b64_data}"
+            print("Successfully prepared image data for Llama 3.2 Vision.")
             
-            print(f"Uploading to Supabase bucket 'chat_media' as {file_name}...")
-            # We must specify content-type otherwise Supabase defaults to application/octet-stream
-            supabase.storage.from_("chat_media").upload(file_name, media_bytes, {"content-type": mime_type})
-            
-            image_url = supabase.storage.from_("chat_media").get_public_url(file_name)
-            print(f"Image uploaded to Supabase successfully: {image_url}")
-            
+            # Non-blocking backup to Supabase storage if available
+            try:
+                file_extension = actual_mime.split("/")[-1] if actual_mime else "jpg"
+                if file_extension == "jpeg": file_extension = "jpg"
+                file_name = f"{uuid.uuid4()}.{file_extension}"
+                supabase.storage.from_("chat_media").upload(file_name, media_bytes, {"content-type": actual_mime})
+                print(f"Backed up image to Supabase: {file_name}")
+            except Exception as se:
+                print(f"Supabase storage note: {se}")
+                
         except Exception as e:
             print(f"Failed to process media: {e}")
-            send_whatsapp_message(phone_number_id, sender_phone, "Sorry, I had trouble downloading or saving your document. Please try again.")
+            send_whatsapp_message(phone_number_id, sender_phone, "Sorry, I had trouble downloading your image. Please try sending it again.")
             return
 
     # 1. Get AI Response from Llama 3.2 Vision
     print("Asking Llama 3.2 Vision to process the message/image...")
-    ai_reply = get_ai_response(text_content, image_url)
+    ai_reply = get_ai_response(text_content, image_uri)
     
     # 2. Send the AI reply back via WhatsApp
     send_whatsapp_message(phone_number_id, sender_phone, ai_reply)

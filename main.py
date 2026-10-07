@@ -124,6 +124,7 @@ def download_whatsapp_media(media_id: str) -> bytes:
 
 def process_whatsapp_message(phone_number_id: str, sender_phone: str, text_content: str = "", media_id: str = None, mime_type: str = None):
     image_uri = None
+    saved_image_url = None
     
     # If the user sent a document or image
     if media_id:
@@ -132,20 +133,33 @@ def process_whatsapp_message(phone_number_id: str, sender_phone: str, text_conte
             media_bytes = download_whatsapp_media(media_id)
             
             # Format as Data URI for instant Llama 3.2 Vision consumption
-            actual_mime = mime_type if mime_type else "image/jpeg"
+            clean_mime = (mime_type or "image/jpeg").split(";")[0].strip().lower()
             b64_data = base64.b64encode(media_bytes).decode("utf-8")
-            image_uri = f"data:{actual_mime};base64,{b64_data}"
+            image_uri = f"data:{clean_mime};base64,{b64_data}"
             print("Successfully prepared image data for Llama 3.2 Vision.")
             
-            # Non-blocking backup to Supabase storage if available
+            # Map clean file extension
+            ext_map = {
+                "image/jpeg": "jpg",
+                "image/jpg": "jpg",
+                "image/png": "png",
+                "image/webp": "webp",
+                "application/pdf": "pdf",
+            }
+            file_extension = ext_map.get(clean_mime, clean_mime.split("/")[-1] if "/" in clean_mime else "jpg")
+            file_name = f"{uuid.uuid4()}.{file_extension}"
+            
+            # Upload to Supabase Storage chat_media bucket
             try:
-                file_extension = actual_mime.split("/")[-1] if actual_mime else "jpg"
-                if file_extension == "jpeg": file_extension = "jpg"
-                file_name = f"{uuid.uuid4()}.{file_extension}"
-                supabase.storage.from_("chat_media").upload(file_name, media_bytes, {"content-type": actual_mime})
-                print(f"Backed up image to Supabase: {file_name}")
+                supabase.storage.from_("chat_media").upload(
+                    file_name, 
+                    media_bytes, 
+                    {"content-type": clean_mime, "upsert": "true"}
+                )
+                saved_image_url = supabase.storage.from_("chat_media").get_public_url(file_name)
+                print(f"Backed up image to Supabase: {saved_image_url}")
             except Exception as se:
-                print(f"Supabase storage note: {se}")
+                print(f"Supabase storage upload error: {type(se).__name__} - {se}")
                 
         except Exception as e:
             print(f"Failed to process media: {e}")
@@ -161,14 +175,18 @@ def process_whatsapp_message(phone_number_id: str, sender_phone: str, text_conte
     
     # 3. Store the chat in Supabase Database
     try:
-        supabase.table("chat_history").insert({
+        chat_record = {
             "user_phone": sender_phone,
             "user_message": text_content if text_content else "[Uploaded Document/Image]",
             "ai_response": ai_reply
-        }).execute()
+        }
+        if saved_image_url:
+            chat_record["image_url"] = saved_image_url
+
+        supabase.table("chat_history").insert(chat_record).execute()
         print("Saved chat to Supabase successfully.")
     except Exception as e:
-        print(f"Note: Could not save to Supabase (Have you created the 'chat_history' table yet?): {e}")
+        print(f"Note: Could not save to Supabase: {e}")
 
 @app.post("/whatsapp")
 async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -179,42 +197,37 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
     
     # Check if this is a WhatsApp message event
     if body.get("object"):
-        entry = body.get("entry", [])
-        if entry and entry[0].get("changes"):
-            change = entry[0]["changes"][0]
-            value = change.get("value", {})
-            
-            # Check if there are messages
-            if value.get("messages"):
-                message_data = value["messages"][0]
-                sender_phone = message_data.get("from")
-                message_type = message_data.get("type")
-                
-                print(f"\n--- New Message Received ---")
-                print(f"From: {sender_phone}")
-                print(f"Type: {message_type}")
-                
-                # Extract the phone number ID of the bot
+        for entry_item in body.get("entry", []):
+            for change in entry_item.get("changes", []):
+                value = change.get("value", {})
                 phone_number_id = value.get("metadata", {}).get("phone_number_id")
-
-                if message_type == "text":
-                    text_content = message_data["text"]["body"]
-                    print(f"Content: {text_content}")
-                    background_tasks.add_task(
-                        process_whatsapp_message, phone_number_id, sender_phone, text_content
-                    )
                 
-                elif message_type in ["image", "document"]:
-                    # Meta puts the media data under a key named either "image" or "document"
-                    media_data = message_data[message_type]
-                    media_id = media_data["id"]
-                    mime_type = media_data["mime_type"]
-                    caption = media_data.get("caption", "")
+                # Iterate over ALL messages in the batch so multi-image uploads aren't dropped
+                for message_data in value.get("messages", []):
+                    sender_phone = message_data.get("from")
+                    message_type = message_data.get("type")
                     
-                    print(f"Media Received. ID: {media_id}, Type: {mime_type}")
-                    background_tasks.add_task(
-                        process_whatsapp_message, phone_number_id, sender_phone, caption, media_id, mime_type
-                    )
+                    print(f"\n--- New Message Received ---")
+                    print(f"From: {sender_phone}")
+                    print(f"Type: {message_type}")
+
+                    if message_type == "text":
+                        text_content = message_data.get("text", {}).get("body", "")
+                        print(f"Content: {text_content}")
+                        background_tasks.add_task(
+                            process_whatsapp_message, phone_number_id, sender_phone, text_content
+                        )
+                    
+                    elif message_type in ["image", "document"]:
+                        media_data = message_data.get(message_type, {})
+                        media_id = media_data.get("id")
+                        mime_type = media_data.get("mime_type")
+                        caption = media_data.get("caption", "")
+                        
+                        print(f"Media Received. ID: {media_id}, Type: {mime_type}")
+                        background_tasks.add_task(
+                            process_whatsapp_message, phone_number_id, sender_phone, caption, media_id, mime_type
+                        )
                 
         return Response(content="EVENT_RECEIVED", status_code=200)
     else:

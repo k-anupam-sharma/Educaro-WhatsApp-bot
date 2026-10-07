@@ -10,8 +10,10 @@ queries = [
         user_phone TEXT,
         user_message TEXT,
         ai_response TEXT,
+        image_url TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE public.chat_history ADD COLUMN IF NOT EXISTS image_url TEXT;
     """,
     "ALTER TABLE public.chat_history ENABLE ROW LEVEL SECURITY;",
     'DROP POLICY IF EXISTS "Allow public insert" ON public.chat_history;',

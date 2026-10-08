@@ -403,6 +403,70 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
     is_onboarded = user.get("onboarded", False)
     user_name = (user.get("name") or "").strip()
     
+    # Allow logging in / syncing profile across devices via 'login <email> <code>'
+    if clean_text.lower().startswith("login") or clean_text.lower().startswith("sync") or clean_text.lower().startswith("link"):
+        parts = clean_text.split()
+        if len(parts) >= 3:
+            login_email = parts[1].strip().lower()
+            login_code = parts[2].strip()
+            try:
+                res = supabase.table("users").select("*").ilike("email", login_email).eq("verification_code", login_code).execute()
+                if res.data and len(res.data) > 0:
+                    matched = res.data[0]
+                    # Link existing profile to this device/phone
+                    supabase.table("users").update({
+                        "name": matched.get("name"),
+                        "email": matched.get("email"),
+                        "level": matched.get("level"),
+                        "course": matched.get("course"),
+                        "target_study": matched.get("target_study"),
+                        "city": matched.get("city"),
+                        "mode": matched.get("mode"),
+                        "verification_code": matched.get("verification_code"),
+                        "onboarded": True,
+                        "onboarding_step": 9,
+                        "is_verified": True
+                    }).eq("phone", sender_phone).execute()
+                    
+                    send_whatsapp_message(
+                        phone_number_id,
+                        sender_phone,
+                        f"🔓 *Account Synced Successfully!* 🇩🇪\n\n"
+                        f"Welcome back, *{matched.get('name', 'Student')}*! Your Educaro profile has been linked to this WhatsApp account:\n"
+                        f"👤 *Name:* {matched.get('name')}\n"
+                        f"📧 *Email:* {matched.get('email')}\n"
+                        f"🎓 *Background:* {matched.get('level')} ({matched.get('course')})\n"
+                        f"🎯 *Target in Germany:* {matched.get('target_study')} in {matched.get('city')}\n"
+                        f"🗣️ *Mode:* {matched.get('mode')}\n\n"
+                        f"🚀 *All AI features, budget calculators, and Anabin tools are now active on this device!*"
+                    )
+                    return True
+                else:
+                    send_whatsapp_message(
+                        phone_number_id,
+                        sender_phone,
+                        "⚠️ *Login Failed:* Invalid email or verification code.\n\n"
+                        "Please check your credentials or reply with:\n"
+                        "*login <your-email> <6-digit-code>*\n\n"
+                        "_(Or type *restart* to create a fresh profile)._"
+                    )
+                    return True
+            except Exception as e:
+                print(f"Error in cross-device login: {e}")
+                send_whatsapp_message(phone_number_id, sender_phone, "⚠️ Error verifying login credentials. Please try again.")
+                return True
+        else:
+            send_whatsapp_message(
+                phone_number_id,
+                sender_phone,
+                "🔑 *Educaro Account Login / Cross-Device Sync*\n\n"
+                "To link your existing Educaro profile to this WhatsApp number, please reply with:\n"
+                "*login <your-email> <6-digit-code>*\n\n"
+                "Example:\n"
+                "`login sasukeisreal612@gmail.com 508898`"
+            )
+            return True
+
     # Allow restarting/resetting onboarding at any time
     if clean_text.lower() in ["restart", "reset", "reset profile", "start over", "change name", "update profile"]:
         supabase.table("users").update({
@@ -503,9 +567,9 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
         )
         return True
 
-    # STEP 3: Email received -> Send OTP via Resend & Show List 1 (Education Level)
+    # STEP 3: Email received -> Send OTP via Resend & Show List 1 (Education Level) OR Link Existing Profile
     elif step == 3:
-        email = clean_text
+        email = clean_text.strip().lower()
         if "@" not in email or "." not in email:
             send_whatsapp_message(
                 phone_number_id,
@@ -514,7 +578,28 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
             )
             return True
         
-        # Generate 6-digit OTP
+        # Check if an active profile already exists with this email
+        try:
+            res = supabase.table("users").select("*").ilike("email", email).eq("onboarded", True).execute()
+            if res.data and len(res.data) > 0:
+                matched = res.data[0]
+                # Transition to step 35 to prompt for existing account verification code
+                supabase.table("users").update({
+                    "email": email,
+                    "onboarding_step": 35
+                }).eq("phone", sender_phone).execute()
+                send_whatsapp_message(
+                    phone_number_id,
+                    sender_phone,
+                    f"🔍 *Existing Educaro Profile Found!* 🇩🇪\n\n"
+                    f"We found an active profile for *{email}* registered under *{matched.get('name', 'Student')}*.\n\n"
+                    f"Please enter your *6-digit verification code* to link your account to this WhatsApp number without repeating the questionnaire:"
+                )
+                return True
+        except Exception as e:
+            print(f"Error checking existing account for email {email}: {e}")
+
+        # Fresh user registration: Generate 6-digit OTP
         code = str(random.randint(100000, 999999))
         
         # Send email via Resend
@@ -549,6 +634,55 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
             header_text="Current Education"
         )
         return True
+
+    # STEP 35: Awaiting verification code to link existing account
+    elif step == 35:
+        entered_code = clean_text.strip()
+        user_email = user.get("email", "").strip().lower()
+        try:
+            res = supabase.table("users").select("*").ilike("email", user_email).eq("verification_code", entered_code).execute()
+            if res.data and len(res.data) > 0:
+                matched = res.data[0]
+                # Link all data
+                supabase.table("users").update({
+                    "name": matched.get("name"),
+                    "email": matched.get("email"),
+                    "level": matched.get("level"),
+                    "course": matched.get("course"),
+                    "target_study": matched.get("target_study"),
+                    "city": matched.get("city"),
+                    "mode": matched.get("mode"),
+                    "verification_code": matched.get("verification_code"),
+                    "onboarded": True,
+                    "onboarding_step": 9,
+                    "is_verified": True
+                }).eq("phone", sender_phone).execute()
+
+                send_whatsapp_message(
+                    phone_number_id,
+                    sender_phone,
+                    f"🎉 *Account Linked Successfully!* 🇩🇪\n\n"
+                    f"Welcome back, *{matched.get('name', 'Student')}*! Your Educaro profile has been linked to this WhatsApp account:\n"
+                    f"👤 *Name:* {matched.get('name')}\n"
+                    f"📧 *Email:* {matched.get('email')}\n"
+                    f"🎓 *Background:* {matched.get('level')} ({matched.get('course')})\n"
+                    f"🎯 *Target in Germany:* {matched.get('target_study')} in {matched.get('city')}\n"
+                    f"🗣️ *Mode:* {matched.get('mode')}\n\n"
+                    f"🚀 *All AI features, budget calculators, and Anabin tools are now active on this device!*"
+                )
+                return True
+            else:
+                send_whatsapp_message(
+                    phone_number_id,
+                    sender_phone,
+                    "⚠️ *Incorrect Code.* That code does not match the one for your account.\n\n"
+                    "Please re-enter your *6-digit verification code*, or type *restart* to set up a new profile."
+                )
+                return True
+        except Exception as e:
+            print(f"Error linking account in step 35: {e}")
+            send_whatsapp_message(phone_number_id, sender_phone, "⚠️ Error verifying code. Please try again.")
+            return True
 
     # STEP 4: Education Level selected -> Show List 2 (Current Field / Course)
     elif step == 4:

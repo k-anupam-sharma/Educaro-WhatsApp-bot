@@ -80,6 +80,33 @@ While a dedicated web/mobile app serves as a detailed workspace, this WhatsApp B
 
 ---
 
+## 🇮🇳 Special India-Tailored Features
+
+1. **Real-Time INR Budget & Part-Time Calculator:**
+   - Automatically converts Blocked Account requirements (€11,904 ≈ ₹10.95 Lakhs) and Semester contributions (€200–€350 ≈ ₹18k–₹32k) into real-time INR at 1 EUR ≈ ₹92.
+   - Calculates student Werkstudent wages (140 full days / 280 half days per year, earning €850–€1,300/mo ≈ ₹78,000–₹1,20,000 INR/mo) to prove how living costs are self-funded.
+
+2. **Instant APS India & Anabin Verifier:**
+   - Guidance on mandatory APS India certificate requirements (₹18,000 fee, DigiLocker verification, professor email checks, 3–8 week processing).
+   - Anabin database status checks (H+, H+/-, H-), 3-year (180 ECTS) vs 4-year (240 ECTS) bachelor degree equivalence, and German GPA conversions (Bavarian Formula).
+
+3. **City "Desi Comfort Index" (out of 10):**
+   - Ranks and scores German student cities on Indian grocery availability, Indian student associations (ISAG), vegetarian/halal accessibility, and rental affordability (€350 in Chemnitz/Magdeburg vs €850+ in Munich).
+
+4. **WhatsApp Voice Note Queries (Native Audio Transcription):**
+   - Students on the go can send voice notes in Indian English or Hindi.
+   - Audio is converted in-memory using `soundfile` and transcribed with `SpeechRecognition`, queried through Llama 3.2, and delivered back with a `🎙️ I heard: "..."` preview.
+
+5. **Forward-to-Parents Summary Cards:**
+   - Auto-generates structured, reassurance-packed summary cards formatted for students to forward directly to Indian parents on WhatsApp.
+   - Highlights €0 tuition fees, 100% blocked account safety (money returned monthly to student), legal work rights, and safety.
+
+6. **Indian Education Loan & Sponsor Advisor:**
+   - Evaluates Public Banks (SBI Global Ed-Vantage, BoB at ~9.5%–10.5%) vs NBFCs (HDFC Credila, Avanse, InCred up to ₹50 Lakhs unsecured).
+   - Details the critical German Embassy / VFS visa requirement (sanction letter must state disbursement into Blocked Account/Sperrkonto) and Section 80E tax deduction benefits.
+
+---
+
 ## 🛠️ Setup Instructions
 
 ### 1. Install Dependencies

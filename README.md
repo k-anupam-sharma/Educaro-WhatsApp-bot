@@ -40,10 +40,43 @@ graph TD;
 ---
 
 ## ✨ Key Features
-* **Multi-Modal AI:** Can read both standard text messages and images (PDFs/JPGs) using NVIDIA's Llama 3.2 API.
-* **Instant Acknowledgment:** Uses FastAPI `BackgroundTasks` to prevent Meta's strict 3-second webhook timeouts.
-* **Cloud Storage:** Automatically downloads WhatsApp images and uploads them to a public Supabase bucket.
-* **Automated Data Injection:** Includes a highly optimized script (`upload_datasets.py`) to flawlessly inject dozens of CSV datasets directly into Supabase's PostgreSQL core.
+* **Multi-Modal AI Vision:** Reads and processes both text messages and uploaded images/documents (transcripts, marksheets, certificates) using NVIDIA Llama 3.2 11B Vision.
+* **Native Typing Indicators (`...`):** Automatically displays Meta's animated 3-dot typing bubble and read receipts to provide responsive visual feedback while AI generates answers.
+* **Instant Acknowledgment:** Uses FastAPI `BackgroundTasks` to return `200 OK` in milliseconds, preventing Meta's webhook timeout drops.
+* **Automated Cloud Backup:** Downloads media files and archives them in Supabase Storage (`chat_media`), with persistent database records in `chat_history`.
+* **Knowledge Base Engine:** Preloaded with 22 structured datasets in Supabase covering German universities, visa stages, APS requirements, living expenses, and timelines.
+
+---
+
+## 🚀 Novelty Features & Strategic Value Proposition
+
+While a dedicated web/mobile app serves as a detailed workspace, this WhatsApp Bot acts as the high-converting **acquisition engine and 24/7 pocket advisor**. Here is what makes the WhatsApp bot uniquely powerful:
+
+### 1. "Camera-First" Document Ingestion (Zero-Friction OCR)
+* **The Problem:** Scanning transcripts, grade sheets, or APS documents into desktop portals feels slow and tedious.
+* **The Novelty:** Students snap a photo on their phone and hit send on WhatsApp. Llama 3.2 Vision performs immediate OCR, extracts grades/credits, calculates their German Grade (Bavarian Formula), and matches them with eligible public universities in seconds.
+
+### 2. Zero-Download, Frictionless Lead Acquisition
+* **The Problem:** Up to 80% of potential students drop off when forced to download an app and fill out sign-up forms.
+* **The Novelty:** 1-tap entry from Instagram, YouTube, or Google Ads directly into WhatsApp. No account creation or passwords required—the user's phone number becomes their verified ID.
+
+### 3. The Omnichannel "Shared Brain"
+* **The Novelty:** The WhatsApp bot and the central Web App share the exact same Supabase database.
+* **Workflow:** A student sends their marksheet on WhatsApp → the file is backed up into `chat_media` and their profile is created in `users`. When they later log into the Web App, their dashboard is pre-filled without re-entering data.
+
+### 4. Proactive Bureaucracy Nudges (Anti-Ghosting Engine)
+* **The Problem:** Web apps are passive—users often forget to log back in, missing critical admission or visa deadlines.
+* **The Novelty:** WhatsApp commands a **~98% open rate**. The bot can push timely, personalized reminders:
+  * *"The Winter semester Uni-Assist deadline for TU Munich is in 5 days. Have you received your APS certificate?"*
+  * *"A new English-taught Master's program in Data Science just opened matching your profile."*
+
+### 5. Instant German Bureaucracy Decoder
+* **The Problem:** Official German letters (*Zulassungsbescheid*, *Meldebescheinigung*, *Sperrkonto* updates) are intimidating and difficult for international students to interpret.
+* **The Novelty:** Students simply forward a snapshot of the German letter, and the bot translates and explains the exact action items in clear English.
+
+### 6. Parent & Tier-2/3 Regional Accessibility
+* **The Problem:** Parents fund the education and need reassurance on finances and blocked accounts, but rarely install new SaaS apps.
+* **The Novelty:** Parents and students in tier-2/3 cities can consult the bot directly on WhatsApp with zero technical friction and low bandwidth consumption.
 
 ---
 

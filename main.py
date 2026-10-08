@@ -55,7 +55,11 @@ You operate as both:
 2. A world-class marketing and sales agent for the native **Voraus AI App**! You actively guide and convert users from this WhatsApp chatbot into active users of the Voraus AI App by highlighting how the app delivers 10x richer visual tools, live interactive maps, automated OCR pipelines, and journey tracking that text chat cannot match.
 
 Always reply in clean, professional English by default. If the user addresses you in Hindi or Hinglish, understand them naturally and respond with warm, clear English mixed with a welcoming desi touch.
-Format responses cleanly for WhatsApp: use bold headings (*like this*), bullet points, and clean emojis. Avoid unbroken walls of text; keep messages scannable and easy to read on mobile.
+=== WHATSAPP RESPONSE FORMATTING (CRITICAL USER RULES) ===
+1. ZERO ASTERISKS: DO NOT use asterisks (*) or (**) for bolding or bullet points! The user specifically requested that NO asterisks appear in the response. Never wrap words, titles, or headings in asterisks. Use clean capitalizations, emojis (📌, 💼, 🎓, 💶), or clean titles instead (e.g., 📌 Blocked Account: ...).
+2. NEVER BUNDLE INTO ONE LARGE PARAGRAPH: Always separate every point, section, and explanation with double line breaks (\n\n) so the message is airy, easy to read, and understandable at a glance on a mobile screen.
+3. BULLET POINTS: Put each bullet point on its own fresh line with a clean bullet symbol (• ) or emoji. Never put multiple points on the same line!
+4. APP CALL-TO-ACTION (CTA): Always place the Voraus AI App reminder in its own separate paragraph at the end with a 📱 emoji.
 
 === STRICT TOPIC GUARDRAILS ===
 You are an exclusive consultant for Higher Education, Vocational Training, Student Finances, Visas, Indian Student Life in Germany, and the **Voraus AI Platform & App**.
@@ -153,12 +157,14 @@ FEATURE PITCH DIRECTORY:
 === PERSISTENT APP REMINDER RULE ===
 At the end of EVERY response, include a short, punchy, and compelling Call-to-Action (CTA) inviting the student to open the **Voraus AI App**:
 Example:
-"📱 *Take the next step on the Voraus AI App:*
-Log into your **Voraus AI App** using your registered email and 6-digit verification code to view your visual journey tracker, explore the Live Berlin Opportunity Map, and generate your German Europass CV in one tap!"
+"📱 Take the next step on the Voraus AI App:
+Log into your Voraus AI App using your registered email and 6-digit verification code to view your visual journey tracker, explore the Live Berlin Opportunity Map, and generate your German Europass CV in one tap!"
 
-=== WHATSAPP RESPONSE FORMATTING ===
-- Bold headings (*like this*), clean bullet points, and welcoming emojis.
-- Keep answers focused, high-impact, and mobile-friendly (under 1,500 characters). Avoid overwhelming walls of text.
+=== SUMMARY FORMATTING CHECKLIST ===
+- ZERO ASTERISKS: No '*' or '**' anywhere in the message. Never bold with asterisks!
+- SEPARATE POINTS: Double line breaks (\n\n) between every distinct point and section. Never combine points into one block!
+- CLEAN BULLETS: Use '• ' or emojis on fresh new lines.
+- Standalone Voraus AI App CTA paragraph at the end with 📱 emoji.
 When an image or document is provided, read all visible text carefully, provide clear OCR extraction, and offer actionable advice."""
 
 @app.get("/")
@@ -349,13 +355,66 @@ def split_message(text: str, max_length: int = 3800) -> list:
         chunks.append(remaining)
     return chunks
 
+def clean_whatsapp_formatting(text: str) -> str:
+    """
+    Cleans up WhatsApp formatting based on user preferences:
+    1. Separates points and sections with double line breaks (\n\n) so nothing is bundled into one large paragraph.
+    2. Removes markdown asterisks ('*' and '**') before and after bold text for a clean, sleek appearance.
+    3. Normalizes bullet points to clean '• ' format on their own line.
+    """
+    if not text:
+        return ""
+    t = str(text)
+    
+    # Normalize line endings
+    t = t.replace("\r\n", "\n").replace("\r", "\n")
+
+    # 1. Break inline headers: '*Header:* Text' -> '*Header:*\n\nText'
+    t = re.sub(r'(\*[^*]{3,90}\*)\s*([A-Z0-9])', r'\1\n\n\2', t)
+
+    # 2. Break inline LLM bullets: ' * *Title:*' or ' * *' or ' * Title:' -> '\n\n• Title: '
+    t = re.sub(r'\s*\*\s+\*+([^*:]+):?\*+[:\s]*', r'\n\n• \1: ', t)
+    t = re.sub(r'([.:!?])\s*\*\s+([A-Z])', r'\1\n\n• \2', t)
+    t = re.sub(r'(^|\n)\s*\*\s+', r'\1• ', t)
+    t = re.sub(r'(^|\n)\s*-\s+', r'\1• ', t)
+
+    # 3. Break inline category labels: 'options. Private Insurance:' -> 'options.\n\n• Private Insurance:'
+    t = re.sub(r'([.!?])\s+([A-Z][A-Za-z0-9\s/&-]{2,35}):\s+', r'\1\n\n• \2: ', t)
+    t = re.sub(r':\s+([A-Z][A-Za-z0-9\s/&-]{2,35}):\s+', r':\n\n• \1: ', t)
+
+    # 4. Ensure major sections / App CTAs start on a new paragraph
+    t = re.sub(r'([.:!?])\s*(\*?Voraus AI App[^*:]*[:!]?\*?)', r'\1\n\n\2', t)
+    t = re.sub(r'([.:!?])\s*(\*?Take the next step[^*:]*[:!]?\*?)', r'\1\n\n\2', t)
+    t = re.sub(r'([.:!?])\s*(Log into your Voraus AI App|Log into the Voraus AI App)', r'\1\n\n📱 \2', t)
+
+    # 5. Remove all asterisks before and after text (*word* or **word**), leaving clean text
+    t = re.sub(r'\*+([^*]+?)\*+', r'\1', t)
+    t = t.replace('*', '')
+
+    # 6. Clean up any accidental double colons
+    t = re.sub(r':\s*:', ':', t)
+
+    # 7. Ensure consistent double spacing between bullet points and sections (no large single paragraphs)
+    t = re.sub(r'([^\n])\s*•\s+', r'\1\n\n• ', t)
+    t = re.sub(r'•\s+(Voraus AI App|The Voraus AI App|Take the next step|Log into)', r'\1', t)
+    t = re.sub(r'([.:!?])\s*(📱\s*Take the next step|Take the next step)', r'\1\n\n📱 Take the next step', t)
+
+    # 8. Normalize multiple newlines (max 2)
+    t = re.sub(r'\n{3,}', '\n\n', t)
+    
+    return t.strip()
+
 def send_whatsapp_message(phone_number_id: str, to: str, text: str):
     """
     Sends a text message using the WhatsApp Business API.
-    Automatically chunks long messages to prevent HTTP 400 parameter errors on WhatsApp.
+    Cleans up formatting (no ugly asterisks, clean separated paragraphs)
+    and automatically chunks long messages to stay under limits.
     """
     if not text or not str(text).strip():
         return
+
+    # Clean formatting according to user preference (separated points, no asterisks)
+    cleaned_text = clean_whatsapp_formatting(str(text))
 
     url = f"https://graph.facebook.com/v21.0/{phone_number_id}/messages"
     headers = {
@@ -363,7 +422,7 @@ def send_whatsapp_message(phone_number_id: str, to: str, text: str):
         "Content-Type": "application/json"
     }
 
-    chunks = split_message(str(text), max_length=3800)
+    chunks = split_message(cleaned_text, max_length=3800)
     for idx, chunk in enumerate(chunks):
         data = {
             "messaging_product": "whatsapp",

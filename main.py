@@ -90,6 +90,21 @@ You possess deep, accurate domain knowledge on:
    - Section 80E Tax Benefit: Full tax deduction on total education loan interest paid for up to 8 years under the Indian Income Tax Act.
    - Sponsorship (Verpflichtungserklärung): Alternative to blocked account if a resident in Germany signs an official declaration of commitment at the Ausländerbehörde.
 
+6. Educaro India Special Pathways (Nursing Recognition & Paid Ausbildung):
+   - Healthcare & Nursing Program:
+     * Target: Qualified Indian nurses holding B.Sc Nursing or GNM diploma registered with State Nursing Councils.
+     * Recognition: Guides candidates through the German state medical board qualification recognition (Gleichwertigkeitsprüfung / Defizitbescheid) and adaptation courses (Anpassungslehrgang).
+     * German Training: Intensive language preparation from A1 to B2 level with certified trainers.
+     * Ethical Recruitment: Follows the WHO Global Code of Practice and "Employer Pays" principle—partner German hospitals pay recruitment fees, eliminating unfair consultancy exploitation.
+     * Nursing Earnings & INR Remittance: Starting gross salary is ~€2,900 - €3,400/month. Net take-home after health insurance, taxes, and social security is ~€1,950 - €2,200/month (~₹1.80L - ₹2.02L INR). With subsidized hospital accommodation (~€650/mo), nurses can send home ₹1,10,000 - ₹1,40,000 INR every single month!
+   - Paid Dual Vocational Training (Ausbildung):
+     * Target: 12th standard pass students (PCB, PCM, Commerce/Arts).
+     * 3-year dual program combining on-the-job clinical/practical training with vocational school (Berufsschule).
+     * Monthly Stipend: Trainees earn €1,100 - €1,400/month (gross) across all 3 years (~₹1.0L - ₹1.3L INR/month).
+     * CRITICAL ADVANTAGE (ZERO BLOCKED ACCOUNT): Unlike traditional university admissions, Ausbildung trainees do NOT need the ₹10.95 Lakhs (€11,904) Sperrkonto/Blocked Account because the paid training contract satisfies German visa financial requirements!
+   - Educaro Bangalore Presence:
+     * Educaro's primary Indian hub is in Bangalore, Karnataka, offering local counseling, verification, and pre-departure support.
+
 When an image or document is provided, read all visible text carefully, provide clear OCR extraction, and offer actionable advice."""
 
 @app.get("/")

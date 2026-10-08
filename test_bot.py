@@ -35,6 +35,14 @@ FEATURE_PROMPTS = {
         "Indian Education Loan & Sponsor Advisor",
         "Which bank in India is best for an education loan for Germany, and what is the rule for the visa sanction letter?"
     ),
+    "7": (
+        "Educaro Healthcare: Nursing Recognition & INR Remittance",
+        "I have a GNM nursing diploma and 2 years experience in Kerala. How does Educaro help me get recognized in Germany, and how much net salary in INR can I send home every month?"
+    ),
+    "8": (
+        "Educaro Ausbildung: Paid Dual Vocational Training (Zero Blocked Account)",
+        "I just passed 12th standard in India. Can I go to Germany without an 11 Lakh blocked account through Educaro's Ausbildung program? How much is the monthly stipend?"
+    ),
 }
 
 def print_menu():
@@ -43,14 +51,14 @@ def print_menu():
     print("="*60)
     for key, (name, _) in FEATURE_PROMPTS.items():
         print(f"[{key}] {name}")
-    print("[7] Enter Custom Prompt")
+    print("[9] Enter Custom Prompt")
     print("[0] Exit")
     print("="*60)
 
 def main():
     while True:
         print_menu()
-        choice = input("\nSelect a feature to test (0-7): ").strip()
+        choice = input("\nSelect a feature to test (0-9): ").strip()
         
         if choice == "0":
             print("Exiting test tool.")
@@ -69,7 +77,7 @@ def main():
             print(response)
             print("="*60)
             
-        elif choice == "7":
+        elif choice == "9":
             custom_prompt = input("\nEnter your test query: ").strip()
             if not custom_prompt:
                 continue

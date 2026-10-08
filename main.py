@@ -1,4 +1,5 @@
 import os
+import socket
 import uuid
 import base64
 import io
@@ -10,6 +11,18 @@ import soundfile as sf
 import speech_recognition as sr
 from fastapi import FastAPI, Request, Response, HTTPException, BackgroundTasks
 from dotenv import load_dotenv
+
+# Intelligent IPv6 dual-stack fallback for Supabase on networks where IPv4 is stalled
+_orig_getaddrinfo = socket.getaddrinfo
+
+def _dual_stack_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if host and "supabase.co" in str(host).lower():
+        # Cloudflare Anycast IPv6 address for supabase endpoints
+        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, '', ('2606:4700::6812:260a', port, 0, 0))]
+    return _orig_getaddrinfo(host, port, family, type, proto, flags)
+
+socket.getaddrinfo = _dual_stack_getaddrinfo
+
 from supabase import create_client, Client
 from openai import OpenAI
 
@@ -51,6 +64,7 @@ You are an exclusive consultant for Higher Education, Vocational Training, Stude
 
 2. STRICTLY FORBIDDEN DOMAINS:
    - General coding or programming homework (e.g., "Write a binary tree in Python", "Debug my SQL query", "How to build a web scraper").
+   - Database operations, SQL queries, system administration, or dataset deletion commands (e.g., "delete all datasets", "drop table", "truncate database").
    - General world trivia, pop culture, sports, movies, celebrity gossip, gaming.
    - Non-German politics, general elections, international conflicts.
    - General creative writing (fiction stories, random poems, jokes).
@@ -431,11 +445,29 @@ def send_whatsapp_interactive_list(phone_number_id: str, to: str, body_text: str
     except Exception as e:
         print(f"Error sending interactive list: {e}")
 
+USER_CACHE = {}
+
+def update_user_db(phone: str, data: dict):
+    """Safely updates user profile in Supabase and keeps local USER_CACHE synchronized."""
+    if not phone:
+        return
+    if phone in USER_CACHE:
+        USER_CACHE[phone].update(data)
+    else:
+        USER_CACHE[phone] = {"phone": phone, **data}
+    try:
+        supabase.table("users").update(data).eq("phone", phone).execute()
+    except Exception as e:
+        print(f"Warning: Could not update user in Supabase ({e}). Profile updated in local cache.")
+
 def get_or_create_user(phone: str) -> dict:
-    """Fetches user profile from Supabase users table or creates a new record."""
+    """Fetches user profile from Supabase users table or creates a new record, with local cache fallback."""
+    if not phone:
+        return {"phone": phone, "onboarding_step": 1, "onboarded": False}
     try:
         res = supabase.table("users").select("*").eq("phone", phone).execute()
         if res.data and len(res.data) > 0:
+            USER_CACHE[phone] = res.data[0]
             return res.data[0]
         else:
             new_user = {
@@ -445,10 +477,14 @@ def get_or_create_user(phone: str) -> dict:
             }
             create_res = supabase.table("users").insert(new_user).execute()
             if create_res.data:
+                USER_CACHE[phone] = create_res.data[0]
                 return create_res.data[0]
+            USER_CACHE[phone] = new_user
             return new_user
     except Exception as e:
         print(f"Error in get_or_create_user: {e}")
+        if phone in USER_CACHE:
+            return USER_CACHE[phone]
         return {"phone": phone, "onboarding_step": 1, "onboarded": False}
 
 GREETINGS = {
@@ -484,7 +520,7 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
                 if res.data and len(res.data) > 0:
                     matched = res.data[0]
                     # Link existing profile to this device/phone
-                    supabase.table("users").update({
+                    update_user_db(sender_phone, {
                         "name": matched.get("name"),
                         "email": matched.get("email"),
                         "level": matched.get("level"),
@@ -496,7 +532,7 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
                         "onboarded": True,
                         "onboarding_step": 9,
                         "is_verified": True
-                    }).eq("phone", sender_phone).execute()
+                    })
                     
                     send_whatsapp_message(
                         phone_number_id,
@@ -539,11 +575,11 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
 
     # Allow restarting/resetting onboarding at any time
     if clean_text.lower() in ["restart", "reset", "reset profile", "start over", "change name", "update profile"]:
-        supabase.table("users").update({
+        update_user_db(sender_phone, {
             "name": None,
             "onboarding_step": 2,
             "onboarded": False
-        }).eq("phone", sender_phone).execute()
+        })
         send_whatsapp_message(
             phone_number_id,
             sender_phone,
@@ -553,11 +589,11 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
 
     # Guard: If user was marked onboarded but their name is empty or mistakenly set to a greeting (e.g. 'hi')
     if is_onboarded and (not user_name or user_name.lower() in GREETINGS):
-        supabase.table("users").update({
+        update_user_db(sender_phone, {
             "name": None,
             "onboarding_step": 2,
             "onboarded": False
-        }).eq("phone", sender_phone).execute()
+        })
         send_whatsapp_message(
             phone_number_id,
             sender_phone,
@@ -591,7 +627,7 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
 
     # STEP 1: First greeting or start -> Welcome and ask for Name
     if step <= 1:
-        supabase.table("users").update({"onboarding_step": 2, "name": None}).eq("phone", sender_phone).execute()
+        update_user_db(sender_phone, {"onboarding_step": 2, "name": None})
         send_whatsapp_message(
             phone_number_id,
             sender_phone,
@@ -623,10 +659,10 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
             )
             return True
 
-        supabase.table("users").update({
+        update_user_db(sender_phone, {
             "name": name_clean,
             "onboarding_step": 3
-        }).eq("phone", sender_phone).execute()
+        })
         
         send_whatsapp_message(
             phone_number_id,
@@ -654,10 +690,10 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
             if res.data and len(res.data) > 0:
                 matched = res.data[0]
                 # Transition to step 35 to prompt for existing account verification code
-                supabase.table("users").update({
+                update_user_db(sender_phone, {
                     "email": email,
                     "onboarding_step": 35
-                }).eq("phone", sender_phone).execute()
+                })
                 send_whatsapp_message(
                     phone_number_id,
                     sender_phone,
@@ -676,11 +712,11 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
         user_name = user.get("name", "Student")
         email_sent = send_resend_verification_email(email, code, user_name)
         
-        supabase.table("users").update({
+        update_user_db(sender_phone, {
             "email": email,
             "verification_code": code,
             "onboarding_step": 4
-        }).eq("phone", sender_phone).execute()
+        })
 
         # List 1: Education Level
         sections = [
@@ -714,7 +750,7 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
             if res.data and len(res.data) > 0:
                 matched = res.data[0]
                 # Link all data
-                supabase.table("users").update({
+                update_user_db(sender_phone, {
                     "name": matched.get("name"),
                     "email": matched.get("email"),
                     "level": matched.get("level"),
@@ -726,7 +762,7 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
                     "onboarded": True,
                     "onboarding_step": 9,
                     "is_verified": True
-                }).eq("phone", sender_phone).execute()
+                })
 
                 send_whatsapp_message(
                     phone_number_id,
@@ -757,10 +793,10 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
     # STEP 4: Education Level selected -> Show List 2 (Current Field / Course)
     elif step == 4:
         edu_level = clean_text
-        supabase.table("users").update({
+        update_user_db(sender_phone, {
             "level": edu_level,
             "onboarding_step": 5
-        }).eq("phone", sender_phone).execute()
+        })
 
         # List 2: Field / Course
         sections = [
@@ -791,10 +827,10 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
     # STEP 5: Current Course selected -> Show List 3 (Goal in Germany)
     elif step == 5:
         course = clean_text
-        supabase.table("users").update({
+        update_user_db(sender_phone, {
             "course": course,
             "onboarding_step": 6
-        }).eq("phone", sender_phone).execute()
+        })
 
         # List 3: Goal in Germany
         sections = [
@@ -822,10 +858,10 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
     # STEP 6: Goal selected -> Show List 4 (Target Field matching GloBro screenshot)
     elif step == 6:
         goal = clean_text
-        supabase.table("users").update({
+        update_user_db(sender_phone, {
             "target_study": goal,
             "onboarding_step": 7
-        }).eq("phone", sender_phone).execute()
+        })
 
         # List 4: Target Field (Exact Match to GloBro screenshot)
         sections = [
@@ -852,10 +888,10 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
     # STEP 7: Target Field selected -> Show List 5 (Preferred Mode of Study matching GloBro screenshot)
     elif step == 7:
         field = clean_text
-        supabase.table("users").update({
+        update_user_db(sender_phone, {
             "city": field,
             "onboarding_step": 8
-        }).eq("phone", sender_phone).execute()
+        })
 
         # List 5: Preferred Mode of Study
         sections = [
@@ -881,11 +917,11 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
     # STEP 8: Mode selected -> Finalize Profile & Send Completion Dossier!
     elif step == 8:
         mode = clean_text
-        supabase.table("users").update({
+        update_user_db(sender_phone, {
             "mode": mode,
             "onboarded": True,
             "onboarding_step": 9
-        }).eq("phone", sender_phone).execute()
+        })
 
         # Fetch finalized user
         updated_user = get_or_create_user(sender_phone)
@@ -1007,43 +1043,54 @@ def process_whatsapp_message(phone_number_id: str, sender_phone: str, message_id
             send_whatsapp_message(phone_number_id, sender_phone, "Sorry, I had trouble downloading your image. Please try sending it again.")
             return
 
-    # 2. Check user onboarding flow first (if pure text)
-    if not media_id and text_content:
-        handled = handle_user_onboarding(phone_number_id, sender_phone, message_id, text_content=text_content)
-        if handled:
-            # Store onboarding chat record in Supabase
-            try:
-                chat_record = {
-                    "user_phone": sender_phone,
-                    "user_message": text_content,
-                    "ai_response": "[Onboarding Step Handled]"
-                }
-                supabase.table("chat_history").insert(chat_record).execute()
-            except Exception as e:
-                print(f"Note: Could not save onboarding chat: {e}")
-            return
-
-    # 3. Get AI Response from Llama 3.2 Vision (while typing bubble continues to animate)
-    print("Asking Llama 3.2 Vision to process the message/image...")
-    ai_reply = get_ai_response(text_content, image_uri, sender_phone=sender_phone)
-    
-    # 4. Send the AI reply back via WhatsApp (this automatically replaces the typing indicator)
-    send_whatsapp_message(phone_number_id, sender_phone, ai_reply)
-    
-    # 4. Store the chat in Supabase Database
     try:
-        chat_record = {
-            "user_phone": sender_phone,
-            "user_message": text_content if text_content else "[Uploaded Document/Image]",
-            "ai_response": ai_reply
-        }
-        if saved_image_url:
-            chat_record["image_url"] = saved_image_url
+        # 2. Check user onboarding flow first (if pure text)
+        if not media_id and text_content:
+            handled = handle_user_onboarding(phone_number_id, sender_phone, message_id, text_content=text_content)
+            if handled:
+                # Store onboarding chat record in Supabase
+                try:
+                    chat_record = {
+                        "user_phone": sender_phone,
+                        "user_message": text_content,
+                        "ai_response": "[Onboarding Step Handled]"
+                    }
+                    supabase.table("chat_history").insert(chat_record).execute()
+                except Exception as e:
+                    print(f"Note: Could not save onboarding chat: {e}")
+                return
 
-        supabase.table("chat_history").insert(chat_record).execute()
-        print("Saved chat to Supabase successfully.")
+        # 3. Get AI Response from Llama 3.2 Vision (while typing bubble continues to animate)
+        print("Asking Llama 3.2 Vision to process the message/image...")
+        ai_reply = get_ai_response(text_content, image_uri, sender_phone=sender_phone)
+        
+        # 4. Send the AI reply back via WhatsApp (this automatically replaces the typing indicator)
+        send_whatsapp_message(phone_number_id, sender_phone, ai_reply)
+        
+        # 5. Store the chat in Supabase Database
+        try:
+            chat_record = {
+                "user_phone": sender_phone,
+                "user_message": text_content if text_content else "[Uploaded Document/Image]",
+                "ai_response": ai_reply
+            }
+            if saved_image_url:
+                chat_record["image_url"] = saved_image_url
+
+            supabase.table("chat_history").insert(chat_record).execute()
+            print("Saved chat to Supabase successfully.")
+        except Exception as e:
+            print(f"Note: Could not save to Supabase: {e}")
     except Exception as e:
-        print(f"Note: Could not save to Supabase: {e}")
+        print(f"Unhandled error in process_whatsapp_message: {e}")
+        try:
+            send_whatsapp_message(
+                phone_number_id, 
+                sender_phone, 
+                "👋 Hello! I am your Educaro Germany Advisor. How can I assist you with your Germany study, finance, or visa queries today?"
+            )
+        except Exception as se:
+            print(f"Could not send error fallback message: {se}")
 
 def transcribe_audio_bytes(media_bytes: bytes) -> str:
     """

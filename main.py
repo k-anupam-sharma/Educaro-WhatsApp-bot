@@ -3,6 +3,8 @@ import uuid
 import base64
 import io
 import random
+import time
+import re
 import requests
 import soundfile as sf
 import speech_recognition as sr
@@ -101,10 +103,14 @@ You possess deep, accurate domain knowledge on:
    - Paid Dual Vocational Training (Ausbildung):
      * Target: 12th standard pass students (PCB, PCM, Commerce/Arts).
      * 3-year dual program combining on-the-job clinical/practical training with vocational school (Berufsschule).
-     * Monthly Stipend: Trainees earn €1,100 - €1,400/month (gross) across all 3 years (~₹1.0L - ₹1.3L INR/month).
-     * CRITICAL ADVANTAGE (ZERO BLOCKED ACCOUNT): Unlike traditional university admissions, Ausbildung trainees do NOT need the ₹10.95 Lakhs (€11,904) Sperrkonto/Blocked Account because the paid training contract satisfies German visa financial requirements!
-   - Educaro Bangalore Presence:
-     * Educaro's primary Indian hub is in Bangalore, Karnataka, offering local counseling, verification, and pre-departure support.
+      * Monthly Stipend: Trainees earn €1,100 - €1,400/month (gross) across all 3 years (~₹1.0L - ₹1.3L INR/month).
+      * CRITICAL ADVANTAGE (ZERO BLOCKED ACCOUNT): Unlike traditional university admissions, Ausbildung trainees do NOT need the ₹10.95 Lakhs (€11,904) Sperrkonto/Blocked Account because the paid training contract satisfies German visa financial requirements!
+    - Educaro Bangalore Presence:
+      * Educaro's primary Indian hub is in Bangalore, Karnataka, offering local counseling, verification, and pre-departure support.
+
+7. Response Formatting & Length for WhatsApp:
+   - Always structure answers with clean bold titles (*like this*), bullet points, and welcoming emojis.
+   - Keep answers focused, high-impact, and mobile-friendly (under 1,500 characters). Avoid generating massive essays or walls of text unless the user explicitly requests an exhaustive breakdown.
 
 When an image or document is provided, read all visible text carefully, provide clear OCR extraction, and offer actionable advice."""
 
@@ -154,12 +160,12 @@ def get_ai_response(user_message: str, image_url: str = None) -> str:
                 {"role": "user", "content": content}
             ],
             temperature=0.5,
-            max_tokens=1024,
+            max_tokens=800,
         )
         return completion.choices[0].message.content or ""
     except Exception as e:
         print(f"Error calling Llama 3.2: {e}")
-        return "Sorry, I'm having trouble connecting to my AI brain right now."
+        return "Sorry, I'm having trouble connecting to my AI brain right now. Please try again in a moment."
 
 def send_typing_indicator(phone_number_id: str, message_id: str):
     """
@@ -188,27 +194,78 @@ def send_typing_indicator(phone_number_id: str, message_id: str):
     except Exception as e:
         print(f"Error triggering typing indicator: {e}")
 
+def split_message(text: str, max_length: int = 3800) -> list:
+    """
+    Splits long messages (>3800 chars) respecting paragraph and sentence boundaries
+    to stay strictly under WhatsApp Cloud API's 4096-character limit.
+    """
+    if not text:
+        return []
+    if len(text) <= max_length:
+        return [text]
+    
+    chunks = []
+    remaining = text
+    while len(remaining) > max_length:
+        # Prefer paragraph break
+        split_idx = remaining.rfind("\n\n", 0, max_length)
+        if split_idx == -1 or split_idx < max_length // 2:
+            # Fallback to single newline
+            split_idx = remaining.rfind("\n", 0, max_length)
+        if split_idx == -1 or split_idx < max_length // 2:
+            # Fallback to sentence end
+            split_idx = remaining.rfind(". ", 0, max_length)
+            if split_idx != -1:
+                split_idx += 1
+        if split_idx == -1 or split_idx < max_length // 2:
+            # Fallback to word boundary
+            split_idx = remaining.rfind(" ", 0, max_length)
+        if split_idx == -1:
+            # Hard limit fallback
+            split_idx = max_length
+            
+        chunks.append(remaining[:split_idx].strip())
+        remaining = remaining[split_idx:].strip()
+        
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
 def send_whatsapp_message(phone_number_id: str, to: str, text: str):
     """
     Sends a text message using the WhatsApp Business API.
+    Automatically chunks long messages to prevent HTTP 400 parameter errors on WhatsApp.
     """
+    if not text or not str(text).strip():
+        return
+
     url = f"https://graph.facebook.com/v21.0/{phone_number_id}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json"
     }
-    data = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": text}
-    }
-    
-    response = requests.post(url, headers=headers, json=data)
-    if response.status_code not in [200, 201]:
-        print(f"Failed to send message: {response.text}")
-    else:
-        print(f"Message sent to {to} successfully.")
+
+    chunks = split_message(str(text), max_length=3800)
+    for idx, chunk in enumerate(chunks):
+        data = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "text",
+            "text": {"body": chunk}
+        }
+        try:
+            response = requests.post(url, headers=headers, json=data)
+            if response.status_code not in [200, 201]:
+                print(f"Failed to send message chunk {idx+1}/{len(chunks)} to {to}: {response.status_code} - {response.text}")
+                if "OAuthException" in response.text or "Session has expired" in response.text:
+                    print("CRITICAL: Meta WhatsApp access token may be expired or invalid.")
+            else:
+                print(f"Message chunk {idx+1}/{len(chunks)} sent to {to} successfully.")
+        except Exception as e:
+            print(f"Exception sending WhatsApp message chunk to {to}: {e}")
+            
+        if len(chunks) > 1 and idx < len(chunks) - 1:
+            time.sleep(0.5)
 
 def send_resend_verification_email(to_email: str, code: str, user_name: str) -> bool:
     """
@@ -324,6 +381,11 @@ def get_or_create_user(phone: str) -> dict:
         print(f"Error in get_or_create_user: {e}")
         return {"phone": phone, "onboarding_step": 1, "onboarded": False}
 
+GREETINGS = {
+    "hi", "hello", "hey", "hola", "namaste", "start", "hii", "hiii", "yo",
+    "good morning", "good afternoon", "good evening", "howdy", "vanakkam", "pranam"
+}
+
 def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: str = None, text_content: str = "", selected_id: str = None) -> bool:
     """
     Manages the multi-step user onboarding flow with WhatsApp Interactive Selection Lists:
@@ -339,10 +401,12 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
     clean_text = (text_content or "").strip()
     user = get_or_create_user(sender_phone)
     is_onboarded = user.get("onboarded", False)
+    user_name = (user.get("name") or "").strip()
     
-    # Allow restarting onboarding at any time
-    if clean_text.lower() in ["restart", "reset", "reset profile", "start over"]:
+    # Allow restarting/resetting onboarding at any time
+    if clean_text.lower() in ["restart", "reset", "reset profile", "start over", "change name", "update profile"]:
         supabase.table("users").update({
+            "name": None,
             "onboarding_step": 2,
             "onboarded": False
         }).eq("phone", sender_phone).execute()
@@ -353,13 +417,29 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
         )
         return True
 
+    # Guard: If user was marked onboarded but their name is empty or mistakenly set to a greeting (e.g. 'hi')
+    if is_onboarded and (not user_name or user_name.lower() in GREETINGS):
+        supabase.table("users").update({
+            "name": None,
+            "onboarding_step": 2,
+            "onboarded": False
+        }).eq("phone", sender_phone).execute()
+        send_whatsapp_message(
+            phone_number_id,
+            sender_phone,
+            "👋 *Welcome to Educaro Germany!* 🇩🇪\n\n"
+            "I am your AI Education & Career Consultant. Let's create your profile in 60 seconds so we can match you with tuition-free German universities, nursing placements, or paid Ausbildung programs.\n\n"
+            "To get started, *what is your full name?*"
+        )
+        return True
+
     # If user is already onboarded
     if is_onboarded:
-        if clean_text.lower() in ["hi", "hello", "hey"]:
+        if clean_text.lower() in GREETINGS:
             send_whatsapp_message(
                 phone_number_id,
                 sender_phone,
-                f"👋 *Hello {user.get('name', '')}!* Welcome back to Educaro Germany.\n\n"
+                f"👋 *Hello {user_name}!* Welcome back to Educaro Germany.\n\n"
                 f"How can I assist you with your journey today?\n"
                 f"• Real-time INR budget & Werkstudent earnings calculator\n"
                 f"• APS India & Anabin university verifier\n"
@@ -375,9 +455,9 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
     # USER IS IN ONBOARDING FLOW
     step = user.get("onboarding_step", 1)
 
-    # STEP 1: First greeting -> Ask Name
+    # STEP 1: First greeting or start -> Welcome and ask for Name
     if step <= 1:
-        supabase.table("users").update({"onboarding_step": 2}).eq("phone", sender_phone).execute()
+        supabase.table("users").update({"onboarding_step": 2, "name": None}).eq("phone", sender_phone).execute()
         send_whatsapp_message(
             phone_number_id,
             sender_phone,
@@ -389,18 +469,35 @@ def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: 
 
     # STEP 2: Name received -> Ask Email
     elif step == 2:
-        name = clean_text
-        if len(name) < 2:
-            send_whatsapp_message(phone_number_id, sender_phone, "Please enter your full name:")
+        # Strip common intro phrases ("My name is Rahul", "I am Priya", "I'm Anupam")
+        name_clean = re.sub(r'^(my\s+name\s+is|i\s+am|i\'m|im|this\s+is)\s+', '', clean_text, flags=re.IGNORECASE).strip()
+
+        # Guard: If user said 'hi', 'hello', or another greeting instead of their name, prompt again
+        if name_clean.lower() in GREETINGS:
+            send_whatsapp_message(
+                phone_number_id,
+                sender_phone,
+                "👋 Hello! To begin creating your Educaro profile, please enter your *full name* (e.g. *Rahul Sharma*):"
+            )
             return True
+
+        if len(name_clean) < 2 or name_clean.lower() in ["ok", "yes", "no", "name", "none", "sure", "idk"]:
+            send_whatsapp_message(
+                phone_number_id,
+                sender_phone,
+                "Please enter your *full name* (e.g. *Rahul Sharma*):"
+            )
+            return True
+
         supabase.table("users").update({
-            "name": name,
+            "name": name_clean,
             "onboarding_step": 3
         }).eq("phone", sender_phone).execute()
+        
         send_whatsapp_message(
             phone_number_id,
             sender_phone,
-            f"Nice to meet you, *{name}*! 🌟\n\n"
+            f"Nice to meet you, *{name_clean}*! 🌟\n\n"
             f"What is your *email address*?\n"
             f"_(We will use this to send your account verification code and sync your profile across devices)._"
         )
@@ -850,7 +947,13 @@ def process_whatsapp_voice_message(phone_number_id: str, sender_phone: str, mess
 
     # Query Llama 3.2
     print(f"Asking Llama 3.2 to answer voice query: {transcribed_text}")
-    ai_reply = get_ai_response(transcribed_text)
+    try:
+        ai_reply = get_ai_response(transcribed_text)
+        if not ai_reply or not ai_reply.strip():
+            ai_reply = "I listened to your voice message, but couldn't generate a clear answer. Please feel free to text your question directly!"
+    except Exception as e:
+        print(f"Error querying Llama 3.2 for voice note: {e}")
+        ai_reply = "I listened to your voice message, but encountered an error generating the response. Please ask your question again or send a text message."
 
     # Format reply with clear voice note header
     final_reply = f"🎙️ *I heard:* \"_{transcribed_text}_\"\n\n{ai_reply}"

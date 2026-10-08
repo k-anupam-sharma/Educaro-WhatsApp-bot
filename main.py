@@ -80,11 +80,38 @@ def get_ai_response(user_message: str, image_url: str = None) -> str:
         print(f"Error calling Llama 3.2: {e}")
         return "Sorry, I'm having trouble connecting to my AI brain right now."
 
+def send_typing_indicator(phone_number_id: str, message_id: str):
+    """
+    Sends a typing indicator to WhatsApp and marks the incoming message as read.
+    Displays the animated '...' typing bubble on the user's screen while Llama is formatting the answer.
+    """
+    url = f"https://graph.facebook.com/v21.0/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": message_id,
+        "typing_indicator": {
+            "type": "text"
+        }
+    }
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        if response.status_code not in [200, 201]:
+            print(f"Typing indicator note: {response.text}")
+        else:
+            print(f"Typing indicator (...) displayed for message: {message_id}")
+    except Exception as e:
+        print(f"Error triggering typing indicator: {e}")
+
 def send_whatsapp_message(phone_number_id: str, to: str, text: str):
     """
     Sends a text message using the WhatsApp Business API.
     """
-    url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
+    url = f"https://graph.facebook.com/v21.0/{phone_number_id}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json"
@@ -104,7 +131,7 @@ def send_whatsapp_message(phone_number_id: str, to: str, text: str):
 
 def download_whatsapp_media(media_id: str) -> bytes:
     """Gets the download URL and downloads the media bytes from WhatsApp."""
-    url = f"https://graph.facebook.com/v18.0/{media_id}"
+    url = f"https://graph.facebook.com/v21.0/{media_id}"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "User-Agent": "curl/7.64.1"
@@ -122,7 +149,11 @@ def download_whatsapp_media(media_id: str) -> bytes:
         raise Exception(f"Failed to download media bytes: {res_bytes.status_code}")
     return res_bytes.content
 
-def process_whatsapp_message(phone_number_id: str, sender_phone: str, text_content: str = "", media_id: str = None, mime_type: str = None):
+def process_whatsapp_message(phone_number_id: str, sender_phone: str, message_id: str = None, text_content: str = "", media_id: str = None, mime_type: str = None):
+    # 1. Immediately show the animated typing bubble (...) on WhatsApp
+    if phone_number_id and message_id:
+        send_typing_indicator(phone_number_id, message_id)
+
     image_uri = None
     saved_image_url = None
     
@@ -166,14 +197,14 @@ def process_whatsapp_message(phone_number_id: str, sender_phone: str, text_conte
             send_whatsapp_message(phone_number_id, sender_phone, "Sorry, I had trouble downloading your image. Please try sending it again.")
             return
 
-    # 1. Get AI Response from Llama 3.2 Vision
+    # 2. Get AI Response from Llama 3.2 Vision (while typing bubble continues to animate)
     print("Asking Llama 3.2 Vision to process the message/image...")
     ai_reply = get_ai_response(text_content, image_uri)
     
-    # 2. Send the AI reply back via WhatsApp
+    # 3. Send the AI reply back via WhatsApp (this automatically replaces the typing indicator)
     send_whatsapp_message(phone_number_id, sender_phone, ai_reply)
     
-    # 3. Store the chat in Supabase Database
+    # 4. Store the chat in Supabase Database
     try:
         chat_record = {
             "user_phone": sender_phone,
@@ -206,16 +237,18 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
                 for message_data in value.get("messages", []):
                     sender_phone = message_data.get("from")
                     message_type = message_data.get("type")
+                    message_id = message_data.get("id")
                     
                     print(f"\n--- New Message Received ---")
                     print(f"From: {sender_phone}")
                     print(f"Type: {message_type}")
+                    print(f"Message ID: {message_id}")
 
                     if message_type == "text":
                         text_content = message_data.get("text", {}).get("body", "")
                         print(f"Content: {text_content}")
                         background_tasks.add_task(
-                            process_whatsapp_message, phone_number_id, sender_phone, text_content
+                            process_whatsapp_message, phone_number_id, sender_phone, message_id, text_content
                         )
                     
                     elif message_type in ["image", "document"]:
@@ -226,7 +259,7 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
                         
                         print(f"Media Received. ID: {media_id}, Type: {mime_type}")
                         background_tasks.add_task(
-                            process_whatsapp_message, phone_number_id, sender_phone, caption, media_id, mime_type
+                            process_whatsapp_message, phone_number_id, sender_phone, message_id, caption, media_id, mime_type
                         )
                 
         return Response(content="EVENT_RECEIVED", status_code=200)

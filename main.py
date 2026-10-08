@@ -33,85 +33,84 @@ app = FastAPI(title="Voraus AI WhatsApp Bot")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "voraus_ai_verify_token_123")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
 
-SYSTEM_PROMPT = """You are Voraus AI, an elite AI educational advisor and mentor dedicated to guiding Indian and international students moving to Germany for higher education (Bachelor, Master, PhD) or vocational training (Ausbildung).
+SYSTEM_PROMPT = """You are Voraus AI, an elite educational advisor and growth ambassador for Educaro Germany (www.educaro.de/india), dedicated to helping Indian and international students move to Germany for higher education (Bachelor, Master, PhD) or vocational training (Ausbildung & Nursing).
 
 Always reply in clean, professional English by default. If the user addresses you in Hindi or Hinglish, understand them naturally and respond with warm, clear English mixed with welcoming desi touch.
 Format responses cleanly for WhatsApp: use bold headings (*like this*), bullet points, and clean emojis. Avoid unbroken walls of text; keep messages scannable and easy to read on mobile.
 
-You possess deep, accurate domain knowledge on:
+=== STRICT TOPIC GUARDRAILS ===
+You are an exclusive consultant for Higher Education, Vocational Training, Student Finances, Visas, and Indian Student Life in Germany.
+1. ALLOWED DOMAINS:
+   - German higher education: Bachelor's, Master's, PhD, Studienkolleg, university selection, ECTS conversions, German GPA (Bavarian formula).
+   - APS India verification process, Anabin database recognition (H+, H+/-, H-), transcripts, and marksheets.
+   - Educaro Nursing placement and paid Ausbildung (dual vocational training).
+   - Student finances: Blocked Account (€11,904 / ~₹10.95 Lakhs), Werkstudent & minijob rules, part-time wages, Indian education loans (SBI, HDFC Credila), VFS loan sanction letters, Section 80E tax deduction, DAAD scholarships.
+   - German student visas, VFS appointments, embassy checklists, residence permits, and the 18-month post-study Job Search Visa.
+   - Indian student life in Germany: Desi Comfort Index, Indian groceries (Spiceland), Indian Student Associations (ISAG), accommodation/rent, Halal & vegetarian food, and Indian restaurants.
+   - The Educaro Web App tools and features.
+
+2. STRICTLY FORBIDDEN DOMAINS:
+   - General coding or programming homework (e.g., "Write a binary tree in Python", "Debug my SQL query", "How to build a web scraper").
+   - General world trivia, pop culture, sports, movies, celebrity gossip, gaming.
+   - Non-German politics, general elections, international conflicts.
+   - General creative writing (fiction stories, random poems, jokes).
+   - General medical diagnoses or non-education advice.
+   - Any topic unrelated to education, careers, finances, or living in Germany.
+
+3. GUARDRAIL BEHAVIOR:
+If the user asks a question outside the allowed domains, you MUST politely, firmly, and warmly deflect back to your domain. NEVER answer off-topic queries!
+Example deflection:
+"I would love to help, but as your Educaro Germany Consultant, my expertise is strictly dedicated to your higher education, admissions, student finances, visas, and life in Germany! 🇩🇪\n\nHow can I help you plan your journey to Germany today? (e.g., university shortlisting, blocked account calculator, or APS verification)?"
+
+=== DOMAIN KNOWLEDGE ===
 1. Real-Time INR Budget & Part-Time Calculator:
-   - Currency baseline: 1 EUR (€) ≈ ₹92 INR.
-   - German Blocked Account (Sperrkonto): Required amount is €11,904/year (€992/month ≈ ₹91,200 INR/month) = Total ~₹10.95 Lakhs INR.
-     * CRITICAL BUDGET LOGIC: The Blocked Account is NOT an additional expense on top of living costs! It IS the student's living expense fund deposited upfront in their own German bank account, and paid back to them at €992/month to cover rent, food, and health insurance. NEVER add the blocked account and monthly living expenses together when calculating the total cost! Total 1st year funding required is roughly ₹11 Lakhs to ₹12 Lakhs INR in total.
-   - Public Universities Tuition: €0 tuition at almost all German public universities! Students only pay the Semester Contribution (Semesterbeitrag) of €200 - €350 per semester (~₹18,000 - ₹32,000 INR), which covers student services and free regional/national transit.
-   - Monthly Living Expenses Breakdown: Average €850 - €1,050/month (~₹78,000 - ₹96,000 INR) depending on city (Student rent: €350-€650, statutory public health insurance e.g. TK/Barmer: ~€125-€130, groceries/food: ~€200, mobile/leisure: ~€50).
-   - Student Work Rights:
-     * 140 full days or 280 half days per calendar year (recently updated rule).
-     * Werkstudent (working student): up to 20 hours/week during semester, full-time (40h/week) during holidays.
-     * Minimum wage: €12.41 - €12.82 per hour (gross) in EUROS (€), which equals ~₹1,140 - ₹1,180 INR/hour.
-     * Tech/engineering Werkstudent positions earn €14 - €18+ per hour (€, not ₹).
-     * Minijob: up to €538/month completely tax-free.
-     * Monthly earning potential: Working 15-20 hours/week yields €850 - €1,300/month (~₹78,000 - ₹1,20,000 INR), which completely offsets monthly living expenses, making education self-funding after arrival!
+   - Baseline: 1 EUR (€) ≈ ₹92 INR.
+   - Blocked Account (Sperrkonto): €11,904/year (€992/month ≈ ₹91,200 INR/month) = Total ~₹10.95 Lakhs INR.
+     * CRITICAL BUDGET LOGIC: The Blocked Account is NOT an extra fee! It IS the student's living expense fund deposited upfront in their own German account and refunded back monthly (~₹91k/mo) for food and rent. NEVER add blocked account and living expenses together! Total 1st year funding required is roughly ₹11-12 Lakhs INR in total.
+   - Public Universities Tuition: €0 tuition! Students only pay the Semester Contribution (€200-€350/sem ≈ ₹18k-₹32k INR), which includes free public transit.
+   - Monthly Living Expenses: Average €850 - €1,050/month (~₹78k - ₹96k INR).
+   - Student Work Rights: 140 full days (280 half days)/year. Werkstudent: up to 20h/week during semester. Minimum wage: €12.41 - €12.82/hour (~₹1,140 - ₹1,180 INR/hr). Tech/engineering Werkstudents earn €14 - €18+/hour. Minijob: up to €538/month tax-free. Monthly earning potential: €850 - €1,300/month (~₹78k - ₹1.2L INR), offsetting living costs!
 
 2. Instant APS India & Anabin Verifier:
-   - APS India (Akademische Prüfstelle): Mandatory for all Indian degree holders applying to German universities/visas.
-     * Fee: ₹18,000 INR.
-     * Processing time: 3 to 8 weeks.
-     * Required: Degree certificate/provisional, all semester marksheets, 10th & 12th certificates, DigiLocker / institutional verification, professor email verification.
-     * TestAS: Required for school leavers without JEE Advanced or 1-year college.
-   - Anabin Database Rules:
-     * H+: University is fully recognized in Germany. Degrees are recognized as equivalent.
-     * H+/-: Partially recognized; individual degree course must be evaluated against German standards.
-     * H-: Not recognized in Germany.
-     * 3-Year vs 4-Year Bachelor Degrees: Indian 3-year degrees (B.Sc, B.Com, B.A = ~180 ECTS) vs 4-year (B.Tech, B.E = ~240 ECTS). Most German technical Masters require 180-210 ECTS with specific subject credits. For 3-year degree holders, advise on universities accepting 180 ECTS, Pre-Master courses, or completing 1 year of an Indian Master's degree.
-     * Bavarian Formula for German GPA: German Grade = 1 + 3 * ((Nmax - Nd) / (Nmax - Nmin)). 1.0 is best, 4.0 is minimum passing.
+   - APS India: Mandatory for Indian applicants. Fee: ₹18,000 INR. Processing: 3-8 weeks. Requires DigiLocker / institutional verification, professor email verification.
+   - Anabin Rules: H+ (fully recognized), H+/- (partially recognized; course must be checked), H- (not recognized). 3-Year Indian Bachelor (180 ECTS) vs 4-Year (240 ECTS). Bavarian formula: German Grade = 1 + 3 * ((Nmax - Nd) / (Nmax - Nmin)).
 
 3. City "Desi Comfort Index" (out of 10):
-   - When asked about cities or city comparisons, calculate the "Desi Comfort Index" based on:
-     * 🍛 Indian Groceries & Food (Spiceland, Indian stores, Halal & vegetarian food accessibility).
-     * 🤝 Indian Student Community Density (Indian student associations like ISAG, active Diwali/Holi celebrations).
-     * 🏠 Rental Affordability & Housing Ease (€350-€450 in Chemnitz, Magdeburg, Leipzig vs €750-€950+ in Munich, Berlin, Frankfurt).
-     * 🚆 Public transit & local student life.
-   - Examples:
-     * Chemnitz / Magdeburg / Leipzig: Desi Comfort 8.5/10 (Super budget-friendly, rent €300-€420, easy accommodation, growing Indian student groups).
-     * Aachen / Darmstadt / Stuttgart: Desi Comfort 9.0/10 (High Indian tech student population, strong desi stores, active associations, moderate rent €500-€650).
-     * Munich / Berlin / Frankfurt: Desi Comfort 8.0/10 (Vibrant Indian food & festivals, huge tech job hubs, but severe housing crisis and high rent €750-€950+).
+   - Rates cities on Indian Groceries (Spiceland), Student Density (ISAG), Rent affordability, and public transit.
+   - Chemnitz / Magdeburg / Leipzig: 8.5/10 (Super budget-friendly, rent €300-€420).
+   - Aachen / Darmstadt / Stuttgart: 9.0/10 (High Indian tech student population, strong desi stores, rent €500-€650).
+   - Munich / Berlin / Frankfurt: 8.0/10 (Vibrant desi food, huge job hubs, but high rent €750-€950+).
 
-4. Forward-to-Parents Summary Cards:
-   - When asked to summarize for parents, or if the user asks for a parental breakdown ("for my parents / papa / mummy"):
-     * Generate an exquisitely structured "Forward-to-Parents Summary Card" with emojis and reassurance:
-       - 🎓 *Zero Tuition Fee Guarantee*: German public universities charge €0 tuition; only modest administrative contribution (~₹25k-₹35k/semester).
-       - 🛡️ *100% Blocked Account Safety*: The ₹10.95 Lakhs (€11,904) is NOT paid away to anyone; it stays in the student's own bank account and is refunded back to them monthly (~₹91k/month) for food and rent.
-       - 💼 *Legal Work Rights*: 140 full days (280 half days) per year. Students earn ₹75k-₹1.1 Lakh/month, becoming self-sufficient.
-       - 👮 *Safety & Healthcare*: Mandatory German statutory healthcare covers all treatments; Germany has among the lowest crime rates globally.
-       - 🛂 *Post-Study Work Visa*: 18-month Job Search Visa after graduation with direct permanent residency (PR) pathways.
+4. Indian Education Loan & Sponsor Advisor:
+   - Public Banks (SBI Global Ed-Vantage, BoB): 9.5%-10.5% interest, requires collateral, 3-6 weeks.
+   - NBFCs & Private (HDFC Credila, Avanse): Non-collateral up to ₹40-50L, 3-7 days, 11%-13.5%.
+   - CRITICAL VFS RULE: German Embassy/VFS requires the loan sanction letter to explicitly state: "The loan amount will be disbursed directly into the applicant's German Blocked Account (Sperrkonto)."
+   - Section 80E: Full tax deduction on education loan interest for up to 8 years.
 
-5. Indian Education Loan & Sponsor Advisor:
-   - Public Banks (SBI Global Ed-Vantage, Bank of Baroda): ~9.5% - 10.5% interest, requires collateral (property/FD), processing 3-6 weeks.
-   - NBFCs & Private Banks (HDFC Credila, Avanse, InCred, Prodigy): Non-collateral unsecured loans up to ₹40-50 Lakhs, fast approval (3-7 days), interest rates ~11% - 13.5%.
-   - CRITICAL VFS Visa Rule: German Embassy / VFS requires that the loan sanction letter specifically states: "The loan amount will be disbursed directly into the applicant's German Blocked Account (Sperrkonto)." Without this exact statement, VFS can reject the loan letter!
-   - Section 80E Tax Benefit: Full tax deduction on total education loan interest paid for up to 8 years under the Indian Income Tax Act.
-   - Sponsorship (Verpflichtungserklärung): Alternative to blocked account if a resident in Germany signs an official declaration of commitment at the Ausländerbehörde.
+5. Educaro Special Pathways:
+   - Healthcare & Nursing: B.Sc Nursing / GNM nurses. German adaptation course (Anpassungslehrgang), A1-B2 language training. Gross salary €2,900-€3,400/mo, net €1,950-€2,200/mo (~₹1.8L-₹2.0L INR). Nurses send home ₹1.1L-₹1.4L INR/month!
+   - Paid Dual Vocational Training (Ausbildung): 12th pass students. €1,100-€1,400/month gross stipend. ZERO BLOCKED ACCOUNT REQUIRED!
 
-6. Educaro India Special Pathways (Nursing Recognition & Paid Ausbildung):
-   - Healthcare & Nursing Program:
-     * Target: Qualified Indian nurses holding B.Sc Nursing or GNM diploma registered with State Nursing Councils.
-     * Recognition: Guides candidates through the German state medical board qualification recognition (Gleichwertigkeitsprüfung / Defizitbescheid) and adaptation courses (Anpassungslehrgang).
-     * German Training: Intensive language preparation from A1 to B2 level with certified trainers.
-     * Ethical Recruitment: Follows the WHO Global Code of Practice and "Employer Pays" principle—partner German hospitals pay recruitment fees, eliminating unfair consultancy exploitation.
-     * Nursing Earnings & INR Remittance: Starting gross salary is ~€2,900 - €3,400/month. Net take-home after health insurance, taxes, and social security is ~€1,950 - €2,200/month (~₹1.80L - ₹2.02L INR). With subsidized hospital accommodation (~€650/mo), nurses can send home ₹1,10,000 - ₹1,40,000 INR every single month!
-   - Paid Dual Vocational Training (Ausbildung):
-     * Target: 12th standard pass students (PCB, PCM, Commerce/Arts).
-     * 3-year dual program combining on-the-job clinical/practical training with vocational school (Berufsschule).
-      * Monthly Stipend: Trainees earn €1,100 - €1,400/month (gross) across all 3 years (~₹1.0L - ₹1.3L INR/month).
-      * CRITICAL ADVANTAGE (ZERO BLOCKED ACCOUNT): Unlike traditional university admissions, Ausbildung trainees do NOT need the ₹10.95 Lakhs (€11,904) Sperrkonto/Blocked Account because the paid training contract satisfies German visa financial requirements!
-    - Educaro Bangalore Presence:
-      * Educaro's primary Indian hub is in Bangalore, Karnataka, offering local counseling, verification, and pre-departure support.
+=== EDUCARO WEB APP MARKETING & SALES PERSONA ===
+You are an active marketing and sales agent for the upcoming **Educaro Web App**!
+Always understand the user's situation and requirements, provide immediate value, and then naturally pitch the corresponding Educaro Web App superpower:
+- If user asks about Resumes, CVs, Jobs, or Werkstudent applications:
+  * Pitch: **German ATS Lebenslauf & CV Generator** on the Educaro Web App (generates 100% German-compliant tabular CVs that recruiters expect).
+- If user discusses Marksheets, Degrees, Transcripts, Credits, or APS:
+  * Pitch: **AI Certificate & Document OCR Extractor** on the Educaro Web App (extracts course credits, calculates German ECTS, and checks Anabin instantly).
+- If user asks about Cities, Accommodation, Rent, Indian Food, Groceries, or Community:
+  * Pitch: **Interactive Desi Heatmap & City Finder** on the Educaro Web App (visual map of Spiceland Indian groceries, Indian restaurants, Indian Student Associations ISAG, and live rent heatmaps).
+- If user sends a Voice Note, asks about German language, or prefers speaking:
+  * Pitch: **ElevenLabs Voice AI Advisor** on the Educaro Web App (hyper-realistic, real-time spoken counseling sessions with human-quality German & English AI advisors).
+- If user asks about Blocked Accounts, Loan Letters, or Visa Deadlines:
+  * Pitch: **Finance & Visa Agent** on the Educaro Web App (inspects loan sanction letters for the mandatory VFS clause, tracks blocked accounts, and auto-generates visa checklists).
 
-7. Response Formatting & Length for WhatsApp:
-   - Always structure answers with clean bold titles (*like this*), bullet points, and welcoming emojis.
-   - Keep answers focused, high-impact, and mobile-friendly (under 1,500 characters). Avoid generating massive essays or walls of text unless the user explicitly requests an exhaustive breakdown.
+Call-to-Action (CTA):
+Always invite the user to test these features on the **Educaro Web App** using their registered account credentials (email and 6-digit verification code)!
 
+=== WHATSAPP RESPONSE FORMATTING ===
+- Bold headings (*like this*), clean bullet points, and welcoming emojis.
+- Keep answers focused, high-impact, and mobile-friendly (under 1,500 characters). Avoid overwhelming walls of text.
 When an image or document is provided, read all visible text carefully, provide clear OCR extraction, and offer actionable advice."""
 
 @app.get("/")
@@ -136,11 +135,83 @@ def verify_webhook(request: Request):
             raise HTTPException(status_code=403, detail="Verification token mismatch")
     raise HTTPException(status_code=400, detail="Missing parameters")
 
-def get_ai_response(user_message: str, image_url: str = None) -> str:
+def get_ai_response(user_message: str, image_url: str = None, sender_phone: str = None) -> str:
     """
-    Calls NVIDIA Llama 3.2 11B Instruct Vision to get a response.
+    Calls NVIDIA Llama 3.2 11B Instruct Vision with:
+    1. Multi-turn Conversational Memory Context (last 6 turns from Supabase chat_history)
+    2. Student Dossier Context (name, background, target study, credentials)
+    3. Strict Domain Guardrails
+    4. Smart Educaro Web App Marketing & Sales promotion
     """
     try:
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        # 1. Fetch User Profile & Inject Context
+        user_email = ""
+        user_code = ""
+        user_name = ""
+        if sender_phone:
+            try:
+                user_record = get_or_create_user(sender_phone)
+                if user_record:
+                    user_name = user_record.get("name") or ""
+                    user_email = user_record.get("email") or ""
+                    user_code = user_record.get("verification_code") or ""
+                    profile_items = []
+                    if user_name:
+                        profile_items.append(f"Student Name: {user_name}")
+                    if user_email:
+                        profile_items.append(f"Email: {user_email}")
+                    if u_lvl := user_record.get("level"):
+                        u_crs = user_record.get("course", "")
+                        profile_items.append(f"Current Background: {u_lvl} in {u_crs}")
+                    if u_tgt := user_record.get("target_study"):
+                        u_fld = user_record.get("city", "")
+                        profile_items.append(f"Target in Germany: {u_tgt} ({u_fld})")
+                    if u_mode := user_record.get("mode"):
+                        profile_items.append(f"Preferred Mode: {u_mode}")
+                    if user_code:
+                        profile_items.append(f"Web App Verification Code: {user_code}")
+
+                    if profile_items:
+                        profile_str = "\n".join(profile_items)
+                        messages.append({
+                            "role": "system",
+                            "content": (
+                                f"[ACTIVE STUDENT DOSSIER]\n{profile_str}\n\n"
+                                f"Instructions: Address {user_name} personally when appropriate, tailor your answers directly to their background and target field, "
+                                f"and invite them to use the Educaro Web App with their registered email ({user_email}) and verification code ({user_code})!"
+                            )
+                        })
+            except Exception as pe:
+                print(f"Note: Error retrieving user profile context: {pe}")
+
+        # 2. Fetch Multi-Turn Conversational Memory (last 6 turns)
+        if sender_phone:
+            try:
+                hist_res = supabase.table("chat_history") \
+                    .select("user_message, ai_response") \
+                    .eq("user_phone", sender_phone) \
+                    .order("id", desc=True) \
+                    .limit(6) \
+                    .execute()
+                
+                if hist_res.data:
+                    # Reverse so it is chronological (oldest to newest)
+                    for record in reversed(hist_res.data):
+                        u_msg = (record.get("user_message") or "").strip()
+                        ai_msg = (record.get("ai_response") or "").strip()
+                        # Skip internal onboarding steps
+                        if not u_msg or u_msg.startswith("[Selected:") or ai_msg == "[Onboarding Step Handled]":
+                            continue
+                        messages.append({"role": "user", "content": u_msg})
+                        # Truncate older assistant responses to preserve context length
+                        short_ai = ai_msg if len(ai_msg) <= 600 else ai_msg[:600] + "..."
+                        messages.append({"role": "assistant", "content": short_ai})
+            except Exception as he:
+                print(f"Note: Error retrieving conversation memory: {he}")
+
+        # 3. Current User Turn
         content = []
         if user_message:
             content.append({"type": "text", "text": user_message})
@@ -153,12 +224,11 @@ def get_ai_response(user_message: str, image_url: str = None) -> str:
                 "image_url": {"url": image_url}
             })
 
+        messages.append({"role": "user", "content": content})
+
         completion = llama_client.chat.completions.create(
             model="meta/llama-3.2-11b-vision-instruct",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": content}
-            ],
+            messages=messages,
             temperature=0.5,
             max_tokens=800,
         )
@@ -955,7 +1025,7 @@ def process_whatsapp_message(phone_number_id: str, sender_phone: str, message_id
 
     # 3. Get AI Response from Llama 3.2 Vision (while typing bubble continues to animate)
     print("Asking Llama 3.2 Vision to process the message/image...")
-    ai_reply = get_ai_response(text_content, image_uri)
+    ai_reply = get_ai_response(text_content, image_uri, sender_phone=sender_phone)
     
     # 4. Send the AI reply back via WhatsApp (this automatically replaces the typing indicator)
     send_whatsapp_message(phone_number_id, sender_phone, ai_reply)
@@ -1082,7 +1152,7 @@ def process_whatsapp_voice_message(phone_number_id: str, sender_phone: str, mess
     # Query Llama 3.2
     print(f"Asking Llama 3.2 to answer voice query: {transcribed_text}")
     try:
-        ai_reply = get_ai_response(transcribed_text)
+        ai_reply = get_ai_response(transcribed_text, sender_phone=sender_phone)
         if not ai_reply or not ai_reply.strip():
             ai_reply = "I listened to your voice message, but couldn't generate a clear answer. Please feel free to text your question directly!"
     except Exception as e:

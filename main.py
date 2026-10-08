@@ -2,6 +2,7 @@ import os
 import uuid
 import base64
 import io
+import random
 import requests
 import soundfile as sf
 import speech_recognition as sr
@@ -209,6 +210,434 @@ def send_whatsapp_message(phone_number_id: str, to: str, text: str):
     else:
         print(f"Message sent to {to} successfully.")
 
+def send_resend_verification_email(to_email: str, code: str, user_name: str) -> bool:
+    """
+    Sends an account verification OTP code to the provided email using Resend API.
+    Enables cross-device authentication and account recovery for the user.
+    """
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    if not resend_api_key:
+        print(f"RESEND_API_KEY not configured. OTP code '{code}' saved to Supabase for {to_email}.")
+        return False
+    
+    url = "https://api.resend.com/emails"
+    headers = {
+        "Authorization": f"Bearer {resend_api_key}",
+        "Content-Type": "application/json"
+    }
+    from_email = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
+    html_content = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+        <h2 style="color: #0b7956;">Educaro Germany - Account Verification</h2>
+        <p>Hello <strong>{user_name}</strong>,</p>
+        <p>Thank you for getting started with Educaro on WhatsApp! Here is your 6-digit account verification code:</p>
+        <div style="background-color: #f4fbf7; padding: 15px; border-radius: 6px; text-align: center; font-size: 28px; font-weight: bold; letter-spacing: 5px; color: #0b7956; margin: 20px 0;">
+            {code}
+        </div>
+        <p>Use this code along with your email (<code>{to_email}</code>) to access your Educaro profile on any device.</p>
+        <p style="color: #666; font-size: 12px; margin-top: 30px;">Educaro GmbH &bull; Your Gateway to Germany</p>
+    </div>
+    """
+    data = {
+        "from": from_email,
+        "to": [to_email],
+        "subject": f"Your Educaro Verification Code: {code}",
+        "html": html_content
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=data, timeout=10)
+        if resp.status_code in [200, 201]:
+            print(f"Resend verification email sent successfully to {to_email}")
+            return True
+        else:
+            print(f"Resend error ({resp.status_code}): {resp.text}")
+            return False
+    except Exception as e:
+        print(f"Failed to send email via Resend: {e}")
+        return False
+
+def send_whatsapp_interactive_list(phone_number_id: str, to: str, body_text: str, button_text: str, sections: list, header_text: str = None):
+    """
+    Sends a WhatsApp Interactive List message using Meta Cloud API.
+    Opens a native selection drawer on the user's phone for 1-tap multiple choice answers.
+    """
+    url = f"https://graph.facebook.com/v21.0/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    interactive_data = {
+        "type": "list",
+        "body": {"text": body_text[:1024]},
+        "action": {
+            "button": button_text[:20],
+            "sections": sections
+        }
+    }
+    if header_text:
+        interactive_data["header"] = {
+            "type": "text",
+            "text": header_text[:60]
+        }
+        
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "interactive",
+        "interactive": interactive_data
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code not in [200, 201]:
+            print(f"Interactive list notice ({response.status_code}): {response.text}")
+            # Fallback to text menu if needed
+            fallback_lines = [f"{header_text or ''}\n{body_text}\n"]
+            for sec in sections:
+                for row in sec.get("rows", []):
+                    desc = f" - _{row['description']}_" if row.get("description") else ""
+                    fallback_lines.append(f"• *{row['title']}*{desc}")
+            fallback_lines.append("\n_(Please reply with your choice)_")
+            send_whatsapp_message(phone_number_id, to, "\n".join(fallback_lines))
+        else:
+            print(f"Interactive list sent to {to} successfully.")
+    except Exception as e:
+        print(f"Error sending interactive list: {e}")
+
+def get_or_create_user(phone: str) -> dict:
+    """Fetches user profile from Supabase users table or creates a new record."""
+    try:
+        res = supabase.table("users").select("*").eq("phone", phone).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+        else:
+            new_user = {
+                "phone": phone,
+                "onboarding_step": 1,
+                "onboarded": False
+            }
+            create_res = supabase.table("users").insert(new_user).execute()
+            if create_res.data:
+                return create_res.data[0]
+            return new_user
+    except Exception as e:
+        print(f"Error in get_or_create_user: {e}")
+        return {"phone": phone, "onboarding_step": 1, "onboarded": False}
+
+def handle_user_onboarding(phone_number_id: str, sender_phone: str, message_id: str = None, text_content: str = "", selected_id: str = None) -> bool:
+    """
+    Manages the multi-step user onboarding flow with WhatsApp Interactive Selection Lists:
+    - Step 1: Greeting & Ask Name (Text)
+    - Step 2: Name received -> Ask Email (Text)
+    - Step 3: Email received -> Generate 6-digit OTP, send via Resend, show Education Level (List Selection)
+    - Step 4: Education Level selected -> show Current Field/Course (List Selection)
+    - Step 5: Current Field selected -> show Goal in Germany (List Selection)
+    - Step 6: Goal selected -> show Target Discipline (List Selection matching GloBro screenshot)
+    - Step 7: Target Discipline selected -> show Preferred Mode of Study (List Selection matching GloBro screenshot)
+    - Step 8: Mode selected -> Profile completed! Display summary, verification code, and unlock AI features.
+    """
+    clean_text = (text_content or "").strip()
+    user = get_or_create_user(sender_phone)
+    is_onboarded = user.get("onboarded", False)
+    
+    # Allow restarting onboarding at any time
+    if clean_text.lower() in ["restart", "reset", "reset profile", "start over"]:
+        supabase.table("users").update({
+            "onboarding_step": 2,
+            "onboarded": False
+        }).eq("phone", sender_phone).execute()
+        send_whatsapp_message(
+            phone_number_id,
+            sender_phone,
+            "🔄 *Profile Reset!* Let's update your Educaro details.\n\nTo begin, *what is your full name?*"
+        )
+        return True
+
+    # If user is already onboarded
+    if is_onboarded:
+        if clean_text.lower() in ["hi", "hello", "hey"]:
+            send_whatsapp_message(
+                phone_number_id,
+                sender_phone,
+                f"👋 *Hello {user.get('name', '')}!* Welcome back to Educaro Germany.\n\n"
+                f"How can I assist you with your journey today?\n"
+                f"• Real-time INR budget & Werkstudent earnings calculator\n"
+                f"• APS India & Anabin university verifier\n"
+                f"• Check the Desi Comfort Index of any city\n"
+                f"• Snap a photo of your certificate / marksheet for instant OCR\n"
+                f"• Or send a voice note 🎙️ anytime!\n\n"
+                f"_(Type *restart* if you would like to edit your profile)._"
+            )
+            return True
+        # Let regular messages pass through to AI
+        return False
+
+    # USER IS IN ONBOARDING FLOW
+    step = user.get("onboarding_step", 1)
+
+    # STEP 1: First greeting -> Ask Name
+    if step <= 1:
+        supabase.table("users").update({"onboarding_step": 2}).eq("phone", sender_phone).execute()
+        send_whatsapp_message(
+            phone_number_id,
+            sender_phone,
+            "👋 *Welcome to Educaro Germany!* 🇩🇪\n\n"
+            "I am your AI Education & Career Consultant. Let's create your profile in 60 seconds so we can match you with tuition-free German universities, nursing placements, or paid Ausbildung programs.\n\n"
+            "To get started, *what is your full name?*"
+        )
+        return True
+
+    # STEP 2: Name received -> Ask Email
+    elif step == 2:
+        name = clean_text
+        if len(name) < 2:
+            send_whatsapp_message(phone_number_id, sender_phone, "Please enter your full name:")
+            return True
+        supabase.table("users").update({
+            "name": name,
+            "onboarding_step": 3
+        }).eq("phone", sender_phone).execute()
+        send_whatsapp_message(
+            phone_number_id,
+            sender_phone,
+            f"Nice to meet you, *{name}*! 🌟\n\n"
+            f"What is your *email address*?\n"
+            f"_(We will use this to send your account verification code and sync your profile across devices)._"
+        )
+        return True
+
+    # STEP 3: Email received -> Send OTP via Resend & Show List 1 (Education Level)
+    elif step == 3:
+        email = clean_text
+        if "@" not in email or "." not in email:
+            send_whatsapp_message(
+                phone_number_id,
+                sender_phone,
+                "⚠️ That doesn't look like a valid email. Please enter a valid email address (e.g. yourname@gmail.com):"
+            )
+            return True
+        
+        # Generate 6-digit OTP
+        code = str(random.randint(100000, 999999))
+        
+        # Send email via Resend
+        user_name = user.get("name", "Student")
+        email_sent = send_resend_verification_email(email, code, user_name)
+        
+        supabase.table("users").update({
+            "email": email,
+            "verification_code": code,
+            "onboarding_step": 4
+        }).eq("phone", sender_phone).execute()
+
+        # List 1: Education Level
+        sections = [
+            {
+                "title": "Select Education",
+                "rows": [
+                    {"id": "edu_12th", "title": "12th / High School", "description": "Completed 12th or currently studying"},
+                    {"id": "edu_bachelors", "title": "Bachelor's Degree", "description": "B.Tech, B.Sc, B.Com, B.A (Done/Pursuing)"},
+                    {"id": "edu_nursing", "title": "Nursing (GNM / B.Sc)", "description": "Registered nurse with clinical experience"},
+                    {"id": "edu_masters", "title": "Master's Degree", "description": "Postgraduate degree completed"},
+                    {"id": "edu_other", "title": "Other / Diploma", "description": "Working professional or polytechnic"}
+                ]
+            }
+        ]
+        send_whatsapp_interactive_list(
+            phone_number_id,
+            sender_phone,
+            body_text=f"Thanks, *{user_name}*! 📧 (Verification code sent to {email})\n\nWhich education level have you completed or are currently in?",
+            button_text="Choose",
+            sections=sections,
+            header_text="Current Education"
+        )
+        return True
+
+    # STEP 4: Education Level selected -> Show List 2 (Current Field / Course)
+    elif step == 4:
+        edu_level = clean_text
+        supabase.table("users").update({
+            "level": edu_level,
+            "onboarding_step": 5
+        }).eq("phone", sender_phone).execute()
+
+        # List 2: Field / Course
+        sections = [
+            {
+                "title": "Select Background",
+                "rows": [
+                    {"id": "crs_cs", "title": "Computer Science / IT", "description": "CSE, BCA, B.Sc CS, IT, Software"},
+                    {"id": "crs_eng", "title": "Engineering (Core)", "description": "Mechanical, Civil, Electrical, ECE"},
+                    {"id": "crs_nurse", "title": "Nursing / Healthcare", "description": "GNM, B.Sc Nursing, Life Sciences"},
+                    {"id": "crs_biz", "title": "Commerce / Business", "description": "B.Com, BBA, Finance, Economics"},
+                    {"id": "crs_sci", "title": "Pure Science / Biotech", "description": "Physics, Chem, Biology, Biotech"},
+                    {"id": "crs_arts", "title": "Arts / Humanities", "description": "B.A, Languages, Social Sciences"},
+                    {"id": "crs_12th_sci", "title": "12th Science (PCM/PCB)", "description": "High school science stream"},
+                    {"id": "crs_12th_com", "title": "12th Commerce / Arts", "description": "High school commerce or arts"}
+                ]
+            }
+        ]
+        send_whatsapp_interactive_list(
+            phone_number_id,
+            sender_phone,
+            body_text=f"Selected: *{edu_level}* ✅\n\nWhat course or field are you currently pursuing or graduated in?",
+            button_text="Choose",
+            sections=sections,
+            header_text="Current Background"
+        )
+        return True
+
+    # STEP 5: Current Course selected -> Show List 3 (Goal in Germany)
+    elif step == 5:
+        course = clean_text
+        supabase.table("users").update({
+            "course": course,
+            "onboarding_step": 6
+        }).eq("phone", sender_phone).execute()
+
+        # List 3: Goal in Germany
+        sections = [
+            {
+                "title": "Target Pathway",
+                "rows": [
+                    {"id": "goal_masters", "title": "Master's Degree", "description": "English-taught public universities"},
+                    {"id": "goal_bachelors", "title": "Bachelor's Degree", "description": "Undergraduate or Studienkolleg"},
+                    {"id": "goal_ausbildung", "title": "Paid Dual Ausbildung", "description": "3-year paid vocational, €0 blocked acc"},
+                    {"id": "goal_nursing", "title": "Nursing Job Placement", "description": "Direct hospital job & recognition"},
+                    {"id": "goal_lang", "title": "German Language Course", "description": "A1 to B2 level preparation first"}
+                ]
+            }
+        ]
+        send_whatsapp_interactive_list(
+            phone_number_id,
+            sender_phone,
+            body_text=f"Great! What would you like to pursue in Germany?",
+            button_text="Choose",
+            sections=sections,
+            header_text="Goal in Germany"
+        )
+        return True
+
+    # STEP 6: Goal selected -> Show List 4 (Target Field matching GloBro screenshot)
+    elif step == 6:
+        goal = clean_text
+        supabase.table("users").update({
+            "target_study": goal,
+            "onboarding_step": 7
+        }).eq("phone", sender_phone).execute()
+
+        # List 4: Target Field (Exact Match to GloBro screenshot)
+        sections = [
+            {
+                "title": "Target Discipline",
+                "rows": [
+                    {"id": "field_it", "title": "IT / Computer Science", "description": "AI, Software, Data Science"},
+                    {"id": "field_biz", "title": "Business / Management", "description": "MBA, International Management"},
+                    {"id": "field_med", "title": "Medical / Healthcare", "description": "Nursing, Healthcare, Life Sciences"},
+                    {"id": "field_eng", "title": "Engineering", "description": "Mechanical, Automotive, Robotics"}
+                ]
+            }
+        ]
+        send_whatsapp_interactive_list(
+            phone_number_id,
+            sender_phone,
+            body_text="Hello, Start your journey to Study in Germany\n\nWhich field are you aiming for?",
+            button_text="Choose",
+            sections=sections,
+            header_text="Select"
+        )
+        return True
+
+    # STEP 7: Target Field selected -> Show List 5 (Preferred Mode of Study matching GloBro screenshot)
+    elif step == 7:
+        field = clean_text
+        supabase.table("users").update({
+            "city": field,
+            "onboarding_step": 8
+        }).eq("phone", sender_phone).execute()
+
+        # List 5: Preferred Mode of Study
+        sections = [
+            {
+                "title": "Language / Mode",
+                "rows": [
+                    {"id": "mode_eng", "title": "English", "description": "100% English-taught programs"},
+                    {"id": "mode_ger", "title": "German", "description": "German-taught or bilingual programs"},
+                    {"id": "mode_dual", "title": "Dual (Work + Study)", "description": "Paid Ausbildung / practical training"}
+                ]
+            }
+        ]
+        send_whatsapp_interactive_list(
+            phone_number_id,
+            sender_phone,
+            body_text="Preferred Mode of Study",
+            button_text="Choose",
+            sections=sections,
+            header_text="Preferred Mode"
+        )
+        return True
+
+    # STEP 8: Mode selected -> Finalize Profile & Send Completion Dossier!
+    elif step == 8:
+        mode = clean_text
+        supabase.table("users").update({
+            "mode": mode,
+            "onboarded": True,
+            "onboarding_step": 9
+        }).eq("phone", sender_phone).execute()
+
+        # Fetch finalized user
+        updated_user = get_or_create_user(sender_phone)
+        u_name = updated_user.get("name", "Student")
+        u_email = updated_user.get("email", "")
+        u_level = updated_user.get("level", "")
+        u_course = updated_user.get("course", "")
+        u_target = updated_user.get("target_study", "")
+        u_field = updated_user.get("city", "")
+        u_mode = updated_user.get("mode", mode)
+        u_code = updated_user.get("verification_code", "")
+
+        completion_msg = (
+            f"🎉 *Congratulations, {u_name}! Your Profile is Ready!* 🇩🇪\n\n"
+            f"Here is your official Educaro dossier:\n"
+            f"👤 *Name:* {u_name}\n"
+            f"📧 *Email:* {u_email}\n"
+            f"🎓 *Current Background:* {u_level} ({u_course})\n"
+            f"🎯 *Goal in Germany:* {u_target} in {u_field}\n"
+            f"🗣️ *Mode of Study:* {u_mode}\n"
+            f"🔑 *Account Verification Code:* `{u_code}`\n\n"
+            f"💡 _Your verification code has been linked. You can use `{u_email}` and `{u_code}` to access your account across any device or on the Educaro Web App!_\n\n"
+            f"🚀 *You're all set!* Ask me anything to get started:\n"
+            f"1️⃣ *INR Budget & Part-Time Earnings* calculator\n"
+            f"2️⃣ *APS India & Anabin* university verifier\n"
+            f"3️⃣ Snap a photo of your certificate / marksheet for instant OCR\n"
+            f"4️⃣ Or press the mic 🎙️ to send a voice note query anytime!"
+        )
+        send_whatsapp_message(phone_number_id, sender_phone, completion_msg)
+        return True
+
+    return False
+
+def process_whatsapp_interactive_reply(phone_number_id: str, sender_phone: str, message_id: str = None, selected_id: str = "", selected_title: str = ""):
+    """
+    Handles interactive list replies and button clicks from WhatsApp.
+    Triggers the corresponding onboarding step and records in chat history.
+    """
+    if phone_number_id and message_id:
+        send_typing_indicator(phone_number_id, message_id)
+        
+    handled = handle_user_onboarding(phone_number_id, sender_phone, message_id, text_content=selected_title, selected_id=selected_id)
+    
+    # Save selection in chat history
+    try:
+        supabase.table("chat_history").insert({
+            "user_phone": sender_phone,
+            "user_message": f"[Selected: {selected_title}]",
+            "ai_response": "[Onboarding Step Handled]"
+        }).execute()
+    except Exception as e:
+        print(f"Note: Could not save interactive chat: {e}")
+
 def download_whatsapp_media(media_id: str) -> bytes:
     """Gets the download URL and downloads the media bytes from WhatsApp."""
     url = f"https://graph.facebook.com/v21.0/{media_id}"
@@ -277,11 +706,27 @@ def process_whatsapp_message(phone_number_id: str, sender_phone: str, message_id
             send_whatsapp_message(phone_number_id, sender_phone, "Sorry, I had trouble downloading your image. Please try sending it again.")
             return
 
-    # 2. Get AI Response from Llama 3.2 Vision (while typing bubble continues to animate)
+    # 2. Check user onboarding flow first (if pure text)
+    if not media_id and text_content:
+        handled = handle_user_onboarding(phone_number_id, sender_phone, message_id, text_content=text_content)
+        if handled:
+            # Store onboarding chat record in Supabase
+            try:
+                chat_record = {
+                    "user_phone": sender_phone,
+                    "user_message": text_content,
+                    "ai_response": "[Onboarding Step Handled]"
+                }
+                supabase.table("chat_history").insert(chat_record).execute()
+            except Exception as e:
+                print(f"Note: Could not save onboarding chat: {e}")
+            return
+
+    # 3. Get AI Response from Llama 3.2 Vision (while typing bubble continues to animate)
     print("Asking Llama 3.2 Vision to process the message/image...")
     ai_reply = get_ai_response(text_content, image_uri)
     
-    # 3. Send the AI reply back via WhatsApp (this automatically replaces the typing indicator)
+    # 4. Send the AI reply back via WhatsApp (this automatically replaces the typing indicator)
     send_whatsapp_message(phone_number_id, sender_phone, ai_reply)
     
     # 4. Store the chat in Supabase Database
@@ -479,6 +924,25 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
                         print(f"Voice/Audio Received. ID: {media_id}, Type: {mime_type}")
                         background_tasks.add_task(
                             process_whatsapp_voice_message, phone_number_id, sender_phone, message_id, media_id, mime_type
+                        )
+
+                    elif message_type == "interactive":
+                        interactive_obj = message_data.get("interactive", {})
+                        inter_type = interactive_obj.get("type")
+                        selected_id = ""
+                        selected_title = ""
+                        if inter_type == "list_reply":
+                            list_reply = interactive_obj.get("list_reply", {})
+                            selected_id = list_reply.get("id", "")
+                            selected_title = list_reply.get("title", "")
+                        elif inter_type == "button_reply":
+                            button_reply = interactive_obj.get("button_reply", {})
+                            selected_id = button_reply.get("id", "")
+                            selected_title = button_reply.get("title", "")
+                        
+                        print(f"Interactive Selection Received: ID='{selected_id}', Title='{selected_title}'")
+                        background_tasks.add_task(
+                            process_whatsapp_interactive_reply, phone_number_id, sender_phone, message_id, selected_id, selected_title
                         )
                 
         return Response(content="EVENT_RECEIVED", status_code=200)

@@ -141,11 +141,26 @@ VERIFY_TOKEN=voraus_ai_verify_token_123
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=your_anon_public_key
 LLAMA_API_KEY=nvapi-your-nvidia-api-key
+RESEND_API_KEY=re_your_resend_api_key_here  # Optional: for live OTP verification emails
+RESEND_FROM_EMAIL=onboarding@resend.dev      # Optional
 ```
 
-### 3. Supabase Configuration
+### 3. Native WhatsApp Interactive Selection Lists & Onboarding Flow
+When a user sends their first message (or `"hi"`), the bot triggers a guided, 1-tap onboarding drawer matching native WhatsApp UI:
+1. **Name Entry:** Text input (`"What is your full name?"`)
+2. **Email Entry & Account Code:** Text input (`"What is your email address?"`) → Generates a 6-digit verification code and dispatches an email via Resend API for cross-device authentication.
+3. **Current Education Level:** Native interactive drawer (`12th / High School`, `Bachelor's Degree`, `Nursing (GNM / B.Sc)`, `Master's Degree`).
+4. **Current Background / Course:** Interactive drawer (`Computer Science / IT`, `Core Engineering`, `Nursing / Healthcare`, etc.).
+5. **Goal in Germany:** Interactive drawer (`Master's Degree`, `Bachelor's Degree`, `Paid Dual Ausbildung`, `Nursing Job Placement`).
+6. **Target Field of Study:** Interactive drawer (`IT / Computer Science`, `Engineering`, `Business / Management`, `Medical / Healthcare`).
+7. **Preferred Mode of Study:** Interactive drawer (`English`, `German`, `Dual (Work + Study)`).
+8. **Completion Dossier:** Summarizes the candidate profile, displays their permanent verification code, and unlocks 24/7 AI advisory features.
+
+### 4. Supabase Configuration
 You need two things set up in your Supabase project:
-1. **Database Table:** A table named `chat_history` with columns `user_phone`, `user_message`, and `ai_response`.
+1. **Database Tables:** 
+   - `users`: Stores user profiles, `phone`, `name`, `email`, `verification_code`, `onboarding_step`, `level`, `course`, `target_study`, `mode`, and `onboarded`.
+   - `chat_history`: Stores message records with columns `user_phone`, `user_message`, `ai_response`, and `image_url`.
 2. **Storage Bucket:** A bucket named exactly `chat_media`. **It must be set to PUBLIC** so the AI can read the images.
 
 ---

@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine, text
 
-cs = 'postgresql+psycopg2://postgres:kanupsharma123@db.ovapetxhquabhjmmrhaq.supabase.co:5432/postgres'
+cs = 'postgresql+psycopg2://postgres.ovapetxhquabhjmmrhaq:kanupsharma123@aws-0-ap-south-1.pooler.supabase.com:5432/postgres'
 engine = create_engine(cs)
 
 queries = [
@@ -20,6 +20,25 @@ queries = [
     'CREATE POLICY "Allow public insert" ON public.chat_history FOR INSERT WITH CHECK (true);',
     'DROP POLICY IF EXISTS "Allow public select" ON public.chat_history;',
     'CREATE POLICY "Allow public select" ON public.chat_history FOR SELECT USING (true);',
+    """
+    ALTER TABLE public.users ADD COLUMN IF NOT EXISTS extra_facts JSONB DEFAULT '{}'::jsonb;
+    ALTER TABLE public.users ADD COLUMN IF NOT EXISTS notes TEXT;
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS public.user_facts (
+        id BIGSERIAL PRIMARY KEY,
+        user_phone TEXT NOT NULL,
+        fact_key TEXT NOT NULL,
+        fact_value TEXT NOT NULL,
+        category TEXT DEFAULT 'general',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_phone, fact_key)
+    );
+    ALTER TABLE public.user_facts ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS "Allow public all" ON public.user_facts;
+    CREATE POLICY "Allow public all" ON public.user_facts FOR ALL USING (true) WITH CHECK (true);
+    """,
     """
     DO $$
     BEGIN
@@ -41,4 +60,5 @@ with engine.connect() as conn:
         conn.execute(text(q))
     conn.commit()
 
-print("Successfully configured chat_history and storage policies in Supabase!")
+print("Successfully configured chat_history, users extra_facts, and user_facts in Supabase!")
+

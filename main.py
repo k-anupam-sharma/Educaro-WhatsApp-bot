@@ -6,22 +6,28 @@ import io
 import random
 import time
 import re
+import json
 import requests
 import soundfile as sf
 import speech_recognition as sr
 from fastapi import FastAPI, Request, Response, HTTPException, BackgroundTasks
 from dotenv import load_dotenv
 
-# Intelligent IPv6 dual-stack fallback for Supabase on networks where IPv4 is stalled
+# Safe dual-stack fallback for Supabase on networks with DNS issues
 _orig_getaddrinfo = socket.getaddrinfo
 
-def _dual_stack_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+def _safe_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    try:
+        res = _orig_getaddrinfo(host, port, family, type, proto, flags)
+        if res:
+            return res
+    except socket.gaierror:
+        pass
     if host and "supabase.co" in str(host).lower():
-        # Cloudflare Anycast IPv6 address for supabase endpoints
-        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, '', ('2606:4700::6812:260a', port, 0, 0))]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('104.18.38.10', port))]
     return _orig_getaddrinfo(host, port, family, type, proto, flags)
 
-socket.getaddrinfo = _dual_stack_getaddrinfo
+socket.getaddrinfo = _safe_getaddrinfo
 
 from supabase import create_client, Client
 from openai import OpenAI
@@ -160,6 +166,13 @@ Example:
 "📱 Take the next step on the Voraus AI App:
 Log into your Voraus AI App using your registered email and 6-digit verification code to view your visual journey tracker, explore the Live Berlin Opportunity Map, and generate your German Europass CV in one tap!"
 
+=== STUDENT MEMORY & ACTIVE DOSSIER RULE ===
+You have full access to the [ACTIVE STUDENT DOSSIER] provided in your instructions (Name, Email, CGPA, College, Background, Target in Germany, IELTS/German Scores, Intake, Budget, APS status, etc.).
+- ALWAYS remember and utilize the student's details provided in their dossier!
+- If the student asks about themselves (e.g. "What is my name?", "What is my CGPA?", "What do you know about me?", "Which universities match my profile?"): ALWAYS answer them accurately, warmly, and directly using the information from their dossier!
+- Never say "I don't have access to your personal information" or "I am an AI without memory". You DO have their active dossier.
+- Naturally personalize your educational counseling to their specific CGPA, background, and target universities.
+
 === SUMMARY FORMATTING CHECKLIST ===
 - ZERO ASTERISKS: No '*' or '**' anywhere in the message. Never bold with asterisks!
 - SEPARATE POINTS: Double line breaks (\n\n) between every distinct point and section. Never combine points into one block!
@@ -192,13 +205,22 @@ def verify_webhook(request: Request):
 def get_ai_response(user_message: str, image_url: str = None, sender_phone: str = None) -> str:
     """
     Calls NVIDIA Llama 3.2 11B Instruct Vision with:
-    1. Multi-turn Conversational Memory Context (last 6 turns from Supabase chat_history)
-    2. Student Dossier Context (name, background, target study, credentials)
-    3. Strict Domain Guardrails
-    4. Voraus AI App Marketing & Sales promotion
+    1. Multi-turn Conversational Memory Context (last 10 turns from Supabase chat_history)
+    2. Active Student Dossier (name, CGPA, college, target study, language scores, credentials)
+    3. Auto-Extracted Facts from Chat & Permanent Storage
+    4. Strict Domain Guardrails & Voraus AI App Marketing
     """
     try:
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        # 0. Quick Regex Extraction: Immediately catch names, CGPA, language scores, etc.
+        if sender_phone and user_message:
+            try:
+                quick_facts = extract_facts_regex(user_message)
+                if quick_facts:
+                    save_extracted_facts(sender_phone, quick_facts)
+            except Exception as fe:
+                print(f"Note on quick regex fact extraction: {fe}")
 
         # 1. Fetch User Profile & Inject Context
         user_email = ""
@@ -218,12 +240,29 @@ def get_ai_response(user_message: str, image_url: str = None, sender_phone: str 
                         profile_items.append(f"Email: {user_email}")
                     if u_lvl := user_record.get("level"):
                         u_crs = user_record.get("course", "")
-                        profile_items.append(f"Current Background: {u_lvl} in {u_crs}")
+                        profile_items.append(f"Current Background: {u_lvl} in {u_crs}" if u_crs else f"Current Background: {u_lvl}")
+                    elif u_crs := user_record.get("course"):
+                        profile_items.append(f"Current Background: {u_crs}")
+                    if u_cgpa := user_record.get("cgpa"):
+                        profile_items.append(f"Academic Score / CGPA: {u_cgpa}")
+                    if u_clg := user_record.get("college"):
+                        profile_items.append(f"Current / Previous College: {u_clg}")
                     if u_tgt := user_record.get("target_study"):
                         u_fld = user_record.get("city", "")
-                        profile_items.append(f"Target in Germany: {u_tgt} ({u_fld})")
+                        profile_items.append(f"Target in Germany: {u_tgt} ({u_fld})" if u_fld else f"Target in Germany: {u_tgt}")
+                    elif u_city := user_record.get("city"):
+                        profile_items.append(f"Target City in Germany: {u_city}")
                     if u_mode := user_record.get("mode"):
                         profile_items.append(f"Preferred Mode: {u_mode}")
+
+                    # Extra auto-extracted facts (IELTS, German level, intake, budget, work experience, APS)
+                    if extra := user_record.get("extra_facts"):
+                        if isinstance(extra, dict):
+                            for fk, fv in extra.items():
+                                if fv:
+                                    clean_k = fk.replace("_", " ").title()
+                                    profile_items.append(f"{clean_k}: {fv}")
+
                     if user_code:
                         profile_items.append(f"Voraus AI App Verification Code: {user_code}")
 
@@ -233,21 +272,23 @@ def get_ai_response(user_message: str, image_url: str = None, sender_phone: str 
                             "role": "system",
                             "content": (
                                 f"[ACTIVE STUDENT DOSSIER]\n{profile_str}\n\n"
-                                f"Instructions: Address {user_name} personally when appropriate, tailor your answers directly to their background and target field, "
-                                f"and invite them to use the Voraus AI App with their registered email ({user_email}) and verification code ({user_code})!"
+                                f"Instructions: You have full access to this student's permanent profile. "
+                                f"Always address {user_name or 'the student'} personally, naturally reference any known background, "
+                                f"CGPA, target course, or language scores when answering, and answer any questions about their profile "
+                                f"accurately based on this dossier!"
                             )
                         })
             except Exception as pe:
                 print(f"Note: Error retrieving user profile context: {pe}")
 
-        # 2. Fetch Multi-Turn Conversational Memory (last 6 turns)
+        # 2. Fetch Multi-Turn Conversational Memory (last 10 turns)
         if sender_phone:
             try:
                 hist_res = supabase.table("chat_history") \
                     .select("user_message, ai_response") \
                     .eq("user_phone", sender_phone) \
                     .order("id", desc=True) \
-                    .limit(6) \
+                    .limit(10) \
                     .execute()
                 
                 if hist_res.data:
@@ -286,7 +327,8 @@ def get_ai_response(user_message: str, image_url: str = None, sender_phone: str 
             temperature=0.5,
             max_tokens=800,
         )
-        return completion.choices[0].message.content or ""
+        raw_reply = completion.choices[0].message.content or ""
+        return clean_whatsapp_formatting(raw_reply)
     except Exception as e:
         print(f"Error calling Llama 3.2: {e}")
         return "Sorry, I'm having trouble connecting to my AI brain right now. Please try again in a moment."
@@ -579,6 +621,166 @@ def get_or_create_user(phone: str) -> dict:
         if phone in USER_CACHE:
             return USER_CACHE[phone]
         return {"phone": phone, "onboarding_step": 1, "onboarded": False}
+
+def save_extracted_facts(phone: str, facts: dict):
+    """
+    Saves extracted student facts into:
+    1. Supabase `users` table for primary columns (name, email, level, course, cgpa, city, college, target_study, mode)
+       and `extra_facts` JSONB (ielts_score, german_level, intake, budget, work_experience, etc.)
+    2. Supabase `user_facts` table for key-value fact tracking
+    3. In-memory USER_CACHE so the active conversation immediately knows them
+    """
+    if not phone or not facts:
+        return
+    
+    core_keys = {"name", "email", "level", "course", "cgpa", "city", "college", "target_study", "mode"}
+    core_updates = {}
+    extra_facts_update = {}
+    
+    user = get_or_create_user(phone)
+    existing_extras = user.get("extra_facts") or {}
+    if not isinstance(existing_extras, dict):
+        existing_extras = {}
+        
+    for k, v in facts.items():
+        if not v or v in [None, "", "null", "None"]:
+            continue
+        v_str = str(v).strip()
+        if k in core_keys:
+            core_updates[k] = v_str
+        else:
+            extra_facts_update[k] = v_str
+            
+    # Merge extra facts
+    if extra_facts_update:
+        merged_extras = {**existing_extras, **extra_facts_update}
+        core_updates["extra_facts"] = merged_extras
+
+    # Update users table & local cache
+    if core_updates:
+        update_user_db(phone, core_updates)
+        print(f"Auto-extracted & saved facts for {phone}: {core_updates}")
+
+    # Upsert into user_facts table for historical auditing
+    for k, v in facts.items():
+        if not v or v in [None, "", "null", "None"]:
+            continue
+        try:
+            supabase.table("user_facts").upsert({
+                "user_phone": phone,
+                "fact_key": k,
+                "fact_value": str(v).strip(),
+                "category": "auto_extracted"
+            }, on_conflict="user_phone,fact_key").execute()
+        except Exception:
+            pass
+
+def extract_facts_regex(text: str) -> dict:
+    """
+    Instantaneous 0ms regex extraction of high-frequency student facts:
+    Name, CGPA/GPA, IELTS/TOEFL, German Level, Intake, APS status, Budget.
+    """
+    if not text:
+        return {}
+    facts = {}
+    t = text.strip()
+    
+    # 1. Name patterns (e.g. 'My name is Anupam', 'I am Anupam Sharma', 'Call me Sneha')
+    if m := re.search(r'\b(?:my name is|call me|i am|i\'m|im)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b', t, re.IGNORECASE):
+        candidate = m.group(1).strip().title()
+        non_names = {'interested', 'looking', 'planning', 'applying', 'here', 'ready', 'from', 'an', 'a', 'the', 'student', 'graduate', 'trying', 'going'}
+        first_word = candidate.split()[0].lower()
+        if first_word not in non_names:
+            facts['name'] = candidate
+            
+    # 2. CGPA / GPA / Percentage
+    if m := re.search(r'\b(?:cgpa|gpa)\s*(?:is|of|:)?\s*([0-9]+(?:\.[0-9]+)?(?:\s*/\s*(?:10|4))?)\b', t, re.IGNORECASE):
+        facts['cgpa'] = m.group(1).strip()
+    elif m := re.search(r'\b([0-9]+(?:\.[0-9]+)?)\s*(?:cgpa|gpa)\b', t, re.IGNORECASE):
+        facts['cgpa'] = m.group(1).strip()
+    elif m := re.search(r'\b([5-9][0-9](?:\.[0-9]+)?)\s*%\s*(?:in|marks|percentage|aggregate|score)?\b', t, re.IGNORECASE):
+        facts['cgpa'] = f'{m.group(1)}%'
+
+    # 3. IELTS / TOEFL / Language Scores
+    if m := re.search(r'\bielts\s*(?:score|band|is|of|:)?\s*([4-9](?:\.[0-9])?)\b', t, re.IGNORECASE):
+        facts['ielts_score'] = m.group(1).strip()
+    elif m := re.search(r'\b([4-9](?:\.[0-9])?)\s*(?:in|band)\s*ielts\b', t, re.IGNORECASE):
+        facts['ielts_score'] = m.group(1).strip()
+    if m := re.search(r'\btoefl\s*(?:score|is|of|:)?\s*([0-9]{2,3})\b', t, re.IGNORECASE):
+        facts['toefl_score'] = m.group(1).strip()
+    if m := re.search(r'\b(A1|A2|B1|B2|C1|C2)\s*(?:level|in German|German)?\b', t, re.IGNORECASE):
+        facts['german_level'] = m.group(1).upper()
+
+    # 4. Target Intake
+    if m := re.search(r'\b(Winter|Summer)\s*(202[4-9])\b', t, re.IGNORECASE):
+        facts['intake'] = f'{m.group(1).title()} {m.group(2)}'
+
+    # 5. APS Certificate Status
+    if re.search(r'\b(?:got|have|received|completed|done)\s*(?:my\s*)?aps\b|\baps\s*(?:is\s*)?(?:done|ready|approved|verified|received)\b', t, re.IGNORECASE):
+        facts['aps_status'] = 'Completed / Received'
+
+    # 6. Budget
+    if m := re.search(r'\bbudget\b[^\d]{1,25}?([0-9]+(?:\.[0-9]+)?\s*(?:lakhs?|lacs?|k|inr|eur|euros?|€))\b', t, re.IGNORECASE):
+        facts['budget'] = m.group(1).strip()
+
+    return facts
+
+PERSONAL_FACT_SIGNALS = {
+    "my", "i am", "i'm", "name", "cgpa", "gpa", "percentage", "score", "ielts", "toefl",
+    "german", "btech", "b.tech", "bsc", "b.sc", "bba", "msc", "m.sc", "masters", "bachelors",
+    "university", "college", "vit", "iit", "nit", "bits", "work", "experience", "working",
+    "budget", "intake", "winter", "summer", "aps", "completed", "graduated", "studying"
+}
+
+def has_personal_fact_signal(text: str) -> bool:
+    if not text or len(text) < 10:
+        return False
+    lower = text.lower()
+    return any(sig in lower for sig in PERSONAL_FACT_SIGNALS)
+
+def extract_facts_llm(user_message: str) -> dict:
+    """
+    Deep natural language fact extractor using NVIDIA Llama 3.2.
+    Extracts structured student dossier facts from conversational text.
+    """
+    if not user_message or len(user_message.strip()) < 10:
+        return {}
+        
+    prompt = f"""Extract any personal student facts from this user message. Return ONLY a valid JSON object with any known keys (omit or set null if not mentioned):
+- name (string: student's personal name)
+- cgpa (string: GPA, CGPA, or percentage)
+- college (string: current or previous university/college)
+- level (string: e.g. Bachelors, Masters, High School)
+- course (string: e.g. Computer Science, Mechanical Engineering, BBA)
+- target_study (string: degree or field they want to study in Germany)
+- city (string: target German city if mentioned)
+- ielts_score (string)
+- german_level (string: e.g. A1, A2, B1, B2)
+- work_experience (string: e.g. 2 years as software developer)
+- budget (string: e.g. 15 lakhs)
+- intake (string: e.g. Winter 2025)
+- aps_status (string: e.g. done, pending, applied)
+
+User message: "{user_message}"
+
+JSON output:"""
+
+    try:
+        resp = llama_client.chat.completions.create(
+            model="meta/llama-3.2-11b-vision-instruct",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=250
+        )
+        raw = resp.choices[0].message.content.strip()
+        if "{" in raw and "}" in raw:
+            json_str = raw[raw.find("{"):raw.rfind("}")+1]
+            data = json.loads(json_str)
+            facts = {k: v for k, v in data.items() if v not in [None, "", "null", "None"]}
+            return facts
+    except Exception as e:
+        print(f"Note on extract_facts_llm: {e}")
+    return {}
 
 GREETINGS = {
     "hi", "hello", "hey", "hola", "namaste", "start", "hii", "hiii", "yo",
@@ -1174,6 +1376,15 @@ def process_whatsapp_message(phone_number_id: str, sender_phone: str, message_id
             print("Saved chat to Supabase successfully.")
         except Exception as e:
             print(f"Note: Could not save to Supabase: {e}")
+
+        # 6. Deep LLM Fact Extraction (Zero added latency to user response)
+        if sender_phone and text_content and has_personal_fact_signal(text_content):
+            try:
+                llm_facts = extract_facts_llm(text_content)
+                if llm_facts:
+                    save_extracted_facts(sender_phone, llm_facts)
+            except Exception as fe:
+                print(f"Background fact extraction note: {fe}")
     except Exception as e:
         print(f"Unhandled error in process_whatsapp_message: {e}")
         try:
@@ -1317,6 +1528,15 @@ def process_whatsapp_voice_message(phone_number_id: str, sender_phone: str, mess
         print("Saved voice chat to Supabase successfully.")
     except Exception as e:
         print(f"Note: Could not save voice chat to Supabase: {e}")
+
+    # Deep LLM Fact Extraction from Voice Note
+    if sender_phone and transcribed_text and has_personal_fact_signal(transcribed_text):
+        try:
+            llm_facts = extract_facts_llm(transcribed_text)
+            if llm_facts:
+                save_extracted_facts(sender_phone, llm_facts)
+        except Exception as fe:
+            print(f"Background voice fact extraction note: {fe}")
 
 @app.post("/whatsapp")
 async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
